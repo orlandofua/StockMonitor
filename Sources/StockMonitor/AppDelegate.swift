@@ -1,4 +1,5 @@
 import AppKit
+import Network
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private enum Keys {
@@ -24,6 +25,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Live symbols are still polled this often to refresh name and previous close.
     private let livePollInterval: TimeInterval = 300
 
+    // Recovery after sleep or network loss (issue #5). The stream reconnects on
+    // its own; this makes sure polled symbols catch up too.
+    private lazy var recoveryRefresh = RefreshTrigger { [weak self] in
+        self?.refresh(force: true)
+        self?.scheduleTimer()
+    }
+    private var wakeObserver: NSObjectProtocol?
+    private let pathMonitor = NWPathMonitor()
+    private var lastPathStatus: NWPath.Status?
+
     private var symbols: [String] {
         get {
             // An empty list falls back to the default so the app never runs with no menu bar item.
@@ -46,6 +57,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         syncStatusItems()
         refresh(force: true)
         scheduleTimer()
+        observeWakeAndNetwork()
+    }
+
+    private func observeWakeAndNetwork() {
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification, object: nil, queue: .main
+        ) { [weak self] _ in self?.recoveryRefresh.fire() }
+
+        pathMonitor.pathUpdateHandler = { [weak self] path in
+            guard let self else { return }
+            if RefreshTrigger.connectionRestored(from: lastPathStatus, to: path.status) {
+                recoveryRefresh.fire()
+            }
+            lastPathStatus = path.status
+        }
+        pathMonitor.start(queue: .main)
     }
 
     // MARK: Status items

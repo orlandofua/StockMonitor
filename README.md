@@ -11,6 +11,8 @@ BZ=F
 
 Each symbol gets its own menu bar item, with a green or red badge for the daily change against the previous close. Prices stream live over Yahoo Finance's WebSocket when the symbol supports it, and fall back to polling Yahoo's chart endpoint when it does not.
 
+After the Mac wakes from sleep, or when the network connection comes back, every symbol is polled again within a few seconds, so prices that do not stream do not sit at their old value until the next scheduled poll.
+
 ## Build and run
 
 Requires macOS 13+ and Swift 5.10+ (the Command Line Tools are enough; Xcode is not required).
