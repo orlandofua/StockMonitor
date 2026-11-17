@@ -66,15 +66,12 @@ struct RefreshTriggerTests {
         #expect(refreshes == 2)
     }
 
-    @Test func pendingRefreshIsCancelledWhenTriggerIsReleased() {
-        let clock = ManualScheduler()
-        var refreshes = 0
-        var trigger: RefreshTrigger? = RefreshTrigger(schedule: clock.scheduler) { refreshes += 1 }
+    @Test func releaseCancelsScheduledJob() {
+        var cancelled = false
+        var trigger: RefreshTrigger? = RefreshTrigger(schedule: { _, _ in { cancelled = true } }) {}
         trigger?.fire()
         trigger = nil
-
-        clock.runAll()
-        #expect(refreshes == 0)
+        #expect(cancelled)
     }
 
     @Test(arguments: [
