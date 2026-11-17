@@ -13,8 +13,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var errors: Set<String> = []
     private var timer: Timer?
 
+    // Live streaming (see docs/adr/0005). Polling remains the fallback.
+    private let stream = QuoteStream()
+    /// When the last stream tick was received, per symbol. Drives the "live" state.
+    private var lastTickReceived: [String: Date] = [:]
+    /// When each symbol was last polled over HTTP.
+    private var lastPoll: [String: Date] = [:]
+    /// A symbol counts as live if a tick arrived within this window.
+    private let liveWindow: TimeInterval = 120
+    /// Live symbols are still polled this often to refresh name and previous close.
+    private let livePollInterval: TimeInterval = 300
+
     private var symbols: [String] {
-        get { defaults.stringArray(forKey: Keys.symbols) ?? ["BZ=F"] }
+        get {
+            // An empty list falls back to the default so the app never runs with no menu bar item.
+            let stored = defaults.stringArray(forKey: Keys.symbols) ?? []
+            return stored.isEmpty ? ["BZ=F"] : stored
+        }
         set { defaults.set(newValue, forKey: Keys.symbols) }
     }
     private var showPercent: Bool {
@@ -27,8 +42,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        stream.onTick = { [weak self] tick in self?.handle(tick) }
         syncStatusItems()
-        refresh()
+        refresh(force: true)
         scheduleTimer()
     }
 
@@ -40,7 +56,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
             quotes[sym] = nil
+            lastTickReceived[sym] = nil
+            lastPoll[sym] = nil
         }
+        stream.setSymbols(wanted)
         // Create in reverse so the first symbol ends up leftmost.
         for sym in wanted.reversed() where items[sym] == nil {
             let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
@@ -86,21 +105,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func scheduleTimer() {
         timer?.invalidate()
-        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.refresh() }
+        timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.refresh(force: false) }
     }
 
-    @objc private func refresh() {
+    private func isLive(_ sym: String) -> Bool {
+        guard let last = lastTickReceived[sym] else { return false }
+        return Date().timeIntervalSince(last) < liveWindow
+    }
+
+    @objc private func refreshNow() {
+        refresh(force: true)
+    }
+
+    /// Polls symbols over HTTP. Live (streaming) symbols are only polled every
+    /// `livePollInterval` unless `force` is set.
+    private func refresh(force: Bool) {
+        let now = Date()
         for sym in symbols {
+            if !force, isLive(sym), let polled = lastPoll[sym], now.timeIntervalSince(polled) < livePollInterval {
+                continue
+            }
+            lastPoll[sym] = now
             Task { @MainActor in
                 do {
-                    quotes[sym] = try await QuoteService.fetch(sym)
+                    let polled = try await QuoteService.fetch(sym)
+                    // If the stream is live, its price is fresher than the poll's.
+                    // Keep it and take only the metadata from the poll.
+                    if isLive(sym), let current = quotes[sym] {
+                        quotes[sym] = Quote(symbol: sym, name: polled.name, price: current.price,
+                                            previousClose: polled.previousClose, currency: polled.currency,
+                                            fetchedAt: current.fetchedAt)
+                    } else {
+                        quotes[sym] = polled
+                    }
                     errors.remove(sym)
                 } catch {
-                    errors.insert(sym)
+                    if quotes[sym] == nil { errors.insert(sym) }
                 }
                 render(sym)
             }
         }
+    }
+
+    private func handle(_ tick: StreamTick) {
+        let sym = tick.symbol
+        guard items[sym] != nil else { return }
+        let previous = quotes[sym]
+        // Ignore out-of-order ticks.
+        if let previous, isLive(sym), tick.time < previous.fetchedAt { return }
+
+        let previousClose = previous?.previousClose
+            ?? tick.previousClose
+            ?? tick.change.map { tick.price - $0 }
+            ?? tick.price
+        quotes[sym] = Quote(symbol: sym, name: previous?.name ?? sym, price: tick.price,
+                            previousClose: previousClose, currency: previous?.currency,
+                            fetchedAt: tick.time)
+        lastTickReceived[sym] = Date()
+        errors.remove(sym)
+        render(sym)
     }
 
     // MARK: Menu
@@ -118,9 +181,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menu.addItem(disabled(errors.contains(sym) ? "\(sym): failed to load" : "\(sym): loading…"))
         }
+        menu.addItem(disabled(isLive(sym) ? "● Live (streaming)" : "Polling every \(intervalLabel(interval))"))
         menu.addItem(.separator())
 
-        menu.addItem(action("Refresh Now", #selector(refresh), key: "r"))
+        menu.addItem(action("Refresh Now", #selector(refreshNow), key: "r"))
         menu.addItem(action("Add Symbol…", #selector(addSymbol), key: "n"))
         let remove = action("Remove \(sym)", #selector(removeSymbol(_:)))
         remove.representedObject = sym
@@ -132,7 +196,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let intervalItem = NSMenuItem(title: "Refresh Every", action: nil, keyEquivalent: "")
         let sub = NSMenu()
-        for (label, secs) in [("15 seconds", 15.0), ("30 seconds", 30), ("1 minute", 60), ("5 minutes", 300)] {
+        for (label, secs) in Self.intervals {
             let i = action(label, #selector(setInterval(_:)))
             i.representedObject = secs
             i.state = secs == interval ? .on : .off
@@ -143,6 +207,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
+    }
+
+    private static let intervals: [(String, TimeInterval)] = [
+        ("15 seconds", 15), ("30 seconds", 30), ("1 minute", 60), ("5 minutes", 300),
+    ]
+
+    private func intervalLabel(_ secs: TimeInterval) -> String {
+        Self.intervals.first { $0.1 == secs }?.0 ?? "\(Int(secs)) seconds"
     }
 
     private func disabled(_ title: String, bold: Bool = false) -> NSMenuItem {
@@ -180,7 +252,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         items.values.forEach { NSStatusBar.system.removeStatusItem($0) }
         items.removeAll()
         syncStatusItems()
-        refresh()
+        refresh(force: true)
     }
 
     @objc private func removeSymbol(_ sender: NSMenuItem) {
