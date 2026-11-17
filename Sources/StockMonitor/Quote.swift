@@ -65,6 +65,16 @@ enum QuoteService {
         struct Chart: Decodable {
             let result: [Result]?
             let error: ChartError?
+
+            enum CodingKeys: String, CodingKey { case result, error }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                result = try container.decodeIfPresent([Result].self, forKey: .result)
+                // Only an object with a code counts as an error. Any other shape is
+                // ignored so it cannot hide a valid result.
+                error = try? container.decodeIfPresent(ChartError.self, forKey: .error)
+            }
         }
         struct Result: Decodable { let meta: Meta }
         struct Meta: Decodable {
@@ -77,7 +87,7 @@ enum QuoteService {
             let previousClose: Double?
         }
         struct ChartError: Decodable {
-            let code: String?
+            let code: String
             let description: String?
         }
         let chart: Chart

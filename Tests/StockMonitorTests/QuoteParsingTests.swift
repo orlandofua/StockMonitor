@@ -80,6 +80,17 @@ struct QuoteParsingTests {
         #expect(throws: QuoteError.badResponse) { try QuoteService.parse(data) }
     }
 
+    @Test func validResultWithOddErrorShape() throws {
+        let body = #"{"chart":{"result":[{"meta":{"symbol":"AAPL","regularMarketPrice":1.5,"chartPreviousClose":1.0}}],"error":"weird"}}"#
+        let q = try QuoteService.parse(Data(body.utf8))
+        #expect(q.price == 1.5)
+    }
+
+    @Test func validResultWithErrorObjectWithoutCode() throws {
+        let body = #"{"chart":{"result":[{"meta":{"symbol":"AAPL","regularMarketPrice":1.5}}],"error":{"description":"x"}}}"#
+        #expect(try QuoteService.parse(Data(body.utf8)).price == 1.5)
+    }
+
     // MARK: Errors
 
     @Test func unknownSymbolIsNotFound() throws {
