@@ -12,8 +12,15 @@ struct Quote {
     var changePercent: Double { previousClose == 0 ? 0 : change / previousClose * 100 }
 }
 
-enum QuoteError: Error {
+/// Why a poll did not produce a quote. Transport failures (offline, timeout)
+/// are not wrapped: `fetch` rethrows them as the `URLError` from `URLSession`.
+enum QuoteError: Error, Equatable {
+    /// Yahoo has no data for the symbol: it does not exist or is delisted.
+    case notFound
+    /// The response was not a chart with a price (unreadable JSON, no result, no price).
     case badResponse
+    /// The server answered with this non-200 status and no chart error in the body.
+    case httpStatus(Int)
 }
 
 /// Fetches quotes from Yahoo Finance's public chart endpoint.
@@ -25,33 +32,65 @@ enum QuoteService {
         request.setValue("Mozilla/5.0 (Macintosh)", forHTTPHeaderField: "User-Agent")
 
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw QuoteError.badResponse }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        return try parse(data, statusCode: status)
+    }
 
-        struct Envelope: Decodable {
-            struct Chart: Decodable { let result: [Result]? }
-            struct Result: Decodable { let meta: Meta }
-            struct Meta: Decodable {
-                let symbol: String
-                let shortName: String?
-                let longName: String?
-                let currency: String?
-                let regularMarketPrice: Double?
-                let chartPreviousClose: Double?
-                let previousClose: Double?
-            }
-            let chart: Chart
+    /// Turns a chart endpoint response into a quote (see docs/adr/0003).
+    ///
+    /// Yahoo answers an unknown symbol with HTTP 404 and a body like
+    /// `{"chart":{"result":null,"error":{"code":"Not Found",...}}}`, so the body is
+    /// checked for a chart error before the status code.
+    static func parse(_ data: Data, statusCode: Int = 200, fetchedAt: Date = Date()) throws -> Quote {
+        let chart = try? JSONDecoder().decode(Envelope.self, from: data).chart
+        if let error = chart?.error {
+            throw error.code == "Not Found" ? QuoteError.notFound
+                : statusCode == 200 ? QuoteError.badResponse : QuoteError.httpStatus(statusCode)
         }
-
-        let meta = try JSONDecoder().decode(Envelope.self, from: data).chart.result?.first?.meta
-        guard let meta, let price = meta.regularMarketPrice else { throw QuoteError.badResponse }
+        guard statusCode == 200 else { throw QuoteError.httpStatus(statusCode) }
+        guard let meta = chart?.result?.first?.meta, let price = meta.regularMarketPrice else {
+            throw QuoteError.badResponse
+        }
         return Quote(
             symbol: meta.symbol,
             name: meta.shortName ?? meta.longName ?? meta.symbol,
             price: price,
             previousClose: meta.previousClose ?? meta.chartPreviousClose ?? price,
             currency: meta.currency,
-            fetchedAt: Date()
+            fetchedAt: fetchedAt
         )
+    }
+
+    private struct Envelope: Decodable {
+        struct Chart: Decodable {
+            let result: [Result]?
+            let error: ChartError?
+
+            enum CodingKeys: String, CodingKey { case result, error }
+
+            init(from decoder: Decoder) throws {
+                let container = try decoder.container(keyedBy: CodingKeys.self)
+                result = try container.decodeIfPresent([Result].self, forKey: .result)
+                // Only an object with a code counts as an error. Any other shape is
+                // ignored so it cannot hide a valid result.
+                error = try? container.decodeIfPresent(ChartError.self, forKey: .error)
+            }
+        }
+        struct Result: Decodable { let meta: Meta }
+        struct Meta: Decodable {
+            let symbol: String
+            let shortName: String?
+            let longName: String?
+            let currency: String?
+            let regularMarketPrice: Double?
+            let chartPreviousClose: Double?
+            let previousClose: Double?
+        }
+        struct ChartError: Decodable {
+            let code: String
+            let description: String?
+        }
+        let chart: Chart
     }
 }
 

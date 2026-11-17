@@ -6,6 +6,7 @@ let package = Package(
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(name: "StockMonitor", path: "Sources/StockMonitor"),
-        .testTarget(name: "StockMonitorTests", dependencies: ["StockMonitor"], path: "Tests/StockMonitorTests"),
+        .testTarget(name: "StockMonitorTests", dependencies: ["StockMonitor"], path: "Tests/StockMonitorTests",
+                    resources: [.copy("Fixtures")]),
     ]
 )
