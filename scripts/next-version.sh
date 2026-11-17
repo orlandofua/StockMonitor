@@ -37,9 +37,10 @@ if [[ ! "$previous" =~ ^v([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
     echo "error: previous tag '$previous' is not vMAJOR.MINOR.PATCH" >&2
     exit 1
 fi
-major="${BASH_REMATCH[1]}"
-minor="${BASH_REMATCH[2]}"
-patch="${BASH_REMATCH[3]}"
+# Force base 10 so a hand-made tag with leading zeros is not read as octal.
+major=$((10#${BASH_REMATCH[1]}))
+minor=$((10#${BASH_REMATCH[2]}))
+patch=$((10#${BASH_REMATCH[3]}))
 
 case "$bump" in
     major) echo "v$((major + 1)).0.0" ;;
