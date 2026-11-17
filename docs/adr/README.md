@@ -11,5 +11,6 @@ This folder records the significant architecture decisions behind StockMonitor, 
 | [0005](0005-websocket-streaming-with-polling-fallback.md) | WebSocket streaming with polling fallback | Accepted |
 | [0006](0006-change-baseline-and-rounding.md) | Change baseline and rounding | Accepted |
 | [0007](0007-persist-settings-in-userdefaults.md) | Persist settings in UserDefaults | Accepted |
+| [0008](0008-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Accepted |
 
 To add a decision, copy the structure of an existing record, use the next number, and add it to the table. When a decision is replaced, mark the old record "Superseded by NNNN" rather than deleting it.
