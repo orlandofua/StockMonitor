@@ -31,5 +31,5 @@ Use both sources:
 - Symbols that stream update within seconds, with fewer HTTP requests.
 - Symbols that do not stream behave exactly as before.
 - The streaming protocol is unofficial and undocumented. If Yahoo changes it, decoding fails quietly and the app falls back to polling.
-- Streamed prices are 32-bit floats. They are rounded to 6 decimals to remove float noise, which is well below display precision.
+- Streamed prices are 32-bit floats. They are converted to `Double` through the float's shortest decimal form, so `92.16` stays `92.16` instead of becoming `92.160004`. A 32-bit float holds about 7 significant digits, so prices above about 100,000 may lose their last cent.
 - The protobuf field numbers come from community reverse engineering, not from Yahoo. Only the fields listed above are relied on.

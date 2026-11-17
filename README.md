@@ -18,6 +18,8 @@ Requires macOS 13+ and Swift 5.10+ (the Command Line Tools are enough; Xcode is 
 open build/StockMonitor.app
 ```
 
+Run the unit tests with `./test.sh`.
+
 ## Usage
 
 Click any ticker in the menu bar to:

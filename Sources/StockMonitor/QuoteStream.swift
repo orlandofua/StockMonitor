@@ -185,8 +185,9 @@ final class QuoteStream {
         }
 
         guard let id, let price else { return nil }
-        // Floats arrive as Float32; round to 6 significant-ish decimals to drop float noise.
-        func clean(_ f: Float?) -> Double? { f.map { (Double($0) * 1_000_000).rounded() / 1_000_000 } }
+        // Values arrive as Float32. Widening directly to Double keeps float noise
+        // (92.16 becomes 92.160004), so go through Float's shortest decimal form instead.
+        func clean(_ f: Float?) -> Double? { f.map { Double($0.description) ?? Double($0) } }
         return StreamTick(
             symbol: id,
             price: clean(price)!,

@@ -75,30 +75,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func render(_ sym: String) {
         guard let button = items[sym]?.button else { return }
         let q = quotes[sym]
-        let price = q.map { format($0.price) } ?? (errors.contains(sym) ? "err" : "…")
+        let price = q.map { Formatting.price($0.price) } ?? (errors.contains(sym) ? "err" : "…")
         var change: String?
         if let q {
             change = showPercent
-                ? String(format: "%+.2f%%", q.changePercent)
-                : formatChange(q.change)
+                ? Formatting.percent(q.changePercent)
+                : Formatting.change(q.change)
         }
         button.image = TickerImage.make(symbol: sym, price: price, change: change, isUp: (q?.change ?? 0) >= 0)
         button.toolTip = q.map { "\($0.name)\nUpdated \($0.fetchedAt.formatted(date: .omitted, time: .standard))" } ?? sym
-    }
-
-    /// Point change, always rounded to 2 decimals with explicit sign (e.g. +0.26, -1.05).
-    private func formatChange(_ value: Double) -> String {
-        let rounded = (value * 100).rounded() / 100
-        return (rounded >= 0 ? "+" : "") + format(rounded, decimals: 2)
-    }
-
-    private func format(_ value: Double, decimals fixed: Int? = nil) -> String {
-        let decimals = fixed ?? (abs(value) >= 1 || value == 0 ? 2 : 4)
-        let f = NumberFormatter()
-        f.numberStyle = .decimal
-        f.minimumFractionDigits = decimals
-        f.maximumFractionDigits = decimals
-        return f.string(from: NSNumber(value: value)) ?? "\(value)"
     }
 
     // MARK: Refresh
@@ -132,9 +117,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     // If the stream is live, its price is fresher than the poll's.
                     // Keep it and take only the metadata from the poll.
                     if isLive(sym), let current = quotes[sym] {
-                        quotes[sym] = Quote(symbol: sym, name: polled.name, price: current.price,
-                                            previousClose: polled.previousClose, currency: polled.currency,
-                                            fetchedAt: current.fetchedAt)
+                        quotes[sym] = current.withMetadata(from: polled)
                     } else {
                         quotes[sym] = polled
                     }
@@ -154,13 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Ignore out-of-order ticks.
         if let previous, isLive(sym), tick.time < previous.fetchedAt { return }
 
-        let previousClose = previous?.previousClose
-            ?? tick.previousClose
-            ?? tick.change.map { tick.price - $0 }
-            ?? tick.price
-        quotes[sym] = Quote(symbol: sym, name: previous?.name ?? sym, price: tick.price,
-                            previousClose: previousClose, currency: previous?.currency,
-                            fetchedAt: tick.time)
+        quotes[sym] = Quote.applying(tick, to: previous)
         lastTickReceived[sym] = Date()
         errors.remove(sym)
         render(sym)
@@ -174,9 +151,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         if let q = quotes[sym] {
             menu.addItem(disabled(q.name, bold: true))
-            menu.addItem(disabled("\(format(q.price)) \(q.currency ?? "")"))
-            menu.addItem(disabled(String(format: "%@ (%+.2f%%)", formatChange(q.change), q.changePercent)))
-            menu.addItem(disabled("Prev close \(format(q.previousClose))"))
+            menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
+            menu.addItem(disabled("\(Formatting.change(q.change)) (\(Formatting.percent(q.changePercent)))"))
+            menu.addItem(disabled("Prev close \(Formatting.price(q.previousClose))"))
             menu.addItem(disabled("Updated \(q.fetchedAt.formatted(date: .omitted, time: .standard))"))
         } else {
             menu.addItem(disabled(errors.contains(sym) ? "\(sym): failed to load" : "\(sym): loading…"))

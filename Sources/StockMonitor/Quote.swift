@@ -54,3 +54,25 @@ enum QuoteService {
         )
     }
 }
+
+// MARK: Merging stream and poll data (see docs/adr/0005)
+
+extension Quote {
+    /// Builds the quote that results from applying a stream tick on top of `previous`.
+    /// The previous close comes from the earlier quote when known (polls are authoritative),
+    /// otherwise from the tick itself.
+    static func applying(_ tick: StreamTick, to previous: Quote?) -> Quote {
+        let previousClose = previous?.previousClose
+            ?? tick.previousClose
+            ?? tick.change.map { tick.price - $0 }
+            ?? tick.price
+        return Quote(symbol: tick.symbol, name: previous?.name ?? tick.symbol, price: tick.price,
+                     previousClose: previousClose, currency: previous?.currency, fetchedAt: tick.time)
+    }
+
+    /// Keeps this (streamed, fresher) price and time, taking name, currency and previous close from a poll.
+    func withMetadata(from polled: Quote) -> Quote {
+        Quote(symbol: symbol, name: polled.name, price: price, previousClose: polled.previousClose,
+              currency: polled.currency, fetchedAt: fetchedAt)
+    }
+}
