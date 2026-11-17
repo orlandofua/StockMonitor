@@ -1,5 +1,7 @@
 # StockMonitor
 
+[![CI](https://github.com/orlandofua/StockMonitor/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/orlandofua/StockMonitor/actions/workflows/ci.yml)
+
 A lightweight macOS menu bar app that shows live prices for the stocks, futures, and crypto you choose, in a compact two-line style:
 
 ```
@@ -19,6 +21,8 @@ open build/StockMonitor.app
 ```
 
 Run the unit tests with `./test.sh`.
+
+Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
 ## Usage
 
