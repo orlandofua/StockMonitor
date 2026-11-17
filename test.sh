@@ -4,6 +4,8 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
+./scripts/next-version-tests.sh
+
 PLUGINS=/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
 if [[ -d "$PLUGINS" ]] && ! xcode-select -p | grep -q Xcode.app; then
     exec swift test -Xswiftc -plugin-path -Xswiftc "$PLUGINS" "$@"

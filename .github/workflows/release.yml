@@ -1,0 +1,94 @@
+name: Release
+
+# Every merged pull request into main produces a versioned GitHub Release with
+# a zipped StockMonitor.app. The PR's labels pick the version bump; see
+# docs/adr/0009-release-on-merge-with-label-driven-semver.md.
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Test, build, and publish a release
+    if: >-
+      github.event.pull_request.merged == true &&
+      !contains(github.event.pull_request.labels.*.name, 'skip-release')
+    runs-on: macos-15
+    timeout-minutes: 20
+    # Run releases one at a time so two merges never compute the same tag.
+    # This sits on the job, not the workflow, so closes that skip the job
+    # (unmerged or skip-release) never join the group and cannot displace a
+    # queued release.
+    concurrency:
+      group: release
+      cancel-in-progress: false
+    env:
+      MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
+      PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+    steps:
+      - name: Check out the merge commit with tags
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.pull_request.merge_commit_sha }}
+          fetch-depth: 0
+
+      - name: Show toolchain
+        run: |
+          xcode-select -p
+          swift --version
+
+      - name: Test
+        run: ./test.sh
+
+      - name: Work out the next version
+        id: version
+        run: |
+          previous="$(git tag --merged HEAD | ./scripts/previous-tag.sh)"
+          labels=()
+          while IFS= read -r label; do
+            [[ -n "$label" ]] && labels+=("$label")
+          done < <(jq -r '.[]' <<<"$PR_LABELS")
+          tag="$(./scripts/next-version.sh "$previous" ${labels[@]+"${labels[@]}"})"
+          echo "Previous tag: ${previous:-none}"
+          echo "Labels: ${labels[*]:-none}"
+          echo "Next tag: ${tag:-none (skip-release)}"
+          if [[ -n "$tag" ]] && git rev-parse -q --verify "refs/tags/$tag" >/dev/null; then
+            echo "::error::Tag $tag already exists"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        if: steps.version.outputs.tag != ''
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: ./build.sh
+
+      - name: Package
+        if: steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          zip="StockMonitor-$TAG.zip"
+          ditto -c -k --sequesterRsrc --keepParent build/StockMonitor.app "$zip"
+          shasum -a 256 "$zip" > "$zip.sha256"
+          cat "$zip.sha256"
+
+      - name: Publish the release
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$MERGE_SHA" \
+            --title "$TAG" \
+            --generate-notes \
+            "StockMonitor-$TAG.zip" "StockMonitor-$TAG.zip.sha256"

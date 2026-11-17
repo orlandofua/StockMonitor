@@ -24,6 +24,29 @@ Run the unit tests with `./test.sh`.
 
 Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
+## Download
+
+Every merged pull request publishes a [GitHub Release](https://github.com/orlandofua/StockMonitor/releases) with a zipped `StockMonitor.app` and its SHA-256 checksum. The app is not notarized, so remove the quarantine attribute before the first launch:
+
+```sh
+unzip StockMonitor-vX.Y.Z.zip
+xattr -dr com.apple.quarantine StockMonitor.app
+open StockMonitor.app
+```
+
+## Releases
+
+Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/release.yml` when a pull request is merged into `main`. The pull request's label picks the bump:
+
+| Label | Effect |
+| --- | --- |
+| `release:patch` or no release label | `v1.2.3` to `v1.2.4` |
+| `release:minor` | `v1.2.3` to `v1.3.0` |
+| `release:major` | `v1.2.3` to `v2.0.0` |
+| `skip-release` | no release |
+
+Local builds default to version `1.0`. Set `VERSION=1.2.3 ./build.sh` to stamp a specific version.
+
 ## Usage
 
 Click any ticker in the menu bar to:
