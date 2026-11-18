@@ -4,7 +4,7 @@ Date: 2026-11-17
 
 ## Status
 
-Accepted
+Accepted. Extended by [0014](0014-configurable-comparison-period-per-symbol.md), which lets each symbol measure its change against the close one week to one year ago. The previous close below remains the 1D baseline.
 
 ## Context
 

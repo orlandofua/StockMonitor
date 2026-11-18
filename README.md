@@ -9,7 +9,7 @@ BZ=F
 92.16 [-0.28]
 ```
 
-Each symbol gets its own menu bar item, with a green or red badge for the daily change against the previous close. Prices stream live over Yahoo Finance's WebSocket when the symbol supports it, and fall back to polling Yahoo's chart endpoint when it does not.
+Each symbol gets its own menu bar item, with a green or red badge for the daily change against the previous close, or for the change over a longer period that you pick per symbol. Prices stream live over Yahoo Finance's WebSocket when the symbol supports it, and fall back to polling Yahoo's chart endpoint when it does not.
 
 After the Mac wakes from sleep, or when the network connection comes back, every symbol is polled again within a few seconds, so prices that do not stream do not sit at their old value until the next scheduled poll.
 
@@ -91,11 +91,18 @@ Click any ticker in the menu bar to:
 - Add a symbol (⌘N), using any Yahoo Finance ticker such as `AAPL`, `BZ=F`, `BTC-USD`, or `^GSPC`. The ticker is checked with Yahoo first: an unknown one shows "Symbol not found" and a network problem shows its own message, and the dialog stays open so you can fix it or cancel
 - Remove the symbol
 - Toggle between point and percent change
+- Pick what the change is measured from under **Compare To** (see below)
 - See whether the symbol is streaming live or being polled
 - Set the polling interval (15s, 30s, 1m, or 5m)
 - Turn **Launch at Login** on or off
 
 Symbols and settings persist between launches.
+
+### Compare to a longer period
+
+Each ticker's **Compare To** submenu sets what its change is measured from: **1D** (the previous close, the default), or the close **1W**, **1M**, **3M**, **6M**, or **1Y** ago. Each symbol keeps its own choice across launches.
+
+For any period other than 1D, the ticker shows an outlined pill with the period next to the change, for example `186.52 [+4.12] 1M`, and the menu shows the period change, the close it is measured from ("Close on Oct 17 182.40"), and today's change. Periods are counted in calendar days; when that day has no close, such as a weekend or holiday, the close before it is used. If the symbol has less history than the period, the earliest close is used and marked "earliest available". The history is fetched once when you pick the period and again once a day, not on every poll. Until it arrives the ticker shows the daily change without the pill.
 
 ### Start at login
 
