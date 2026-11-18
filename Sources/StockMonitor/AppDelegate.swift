@@ -40,6 +40,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self?.scheduleTimer()
     }
     private var wakeObserver: NSObjectProtocol?
+    private let launchAtLogin = LaunchAtLogin()
     private let pathMonitor = NWPathMonitor()
     private var lastPathStatus: NWPath.Status?
 
@@ -270,6 +271,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         intervalItem.submenu = sub
         menu.addItem(intervalItem)
 
+        // Read from the system each time the menu opens, so changes made in
+        // System Settings show up here too (issue #10).
+        let login = action(LaunchAtLogin.title, #selector(toggleLaunchAtLogin))
+        login.state = launchAtLogin.menuState
+        login.toolTip = launchAtLogin.toolTip
+        menu.addItem(login)
+
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
@@ -337,6 +345,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func togglePercent() {
         showPercent.toggle()
         symbols.forEach(render)
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        do {
+            try launchAtLogin.toggle()
+        } catch {
+            // toggle() only throws Failure; anything else is reported as a failed add.
+            let failure = error as? LaunchAtLogin.Failure ?? LaunchAtLogin.Failure(action: .register, underlying: error)
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = failure.message
+            alert.informativeText = failure.informativeText
+            NSApp.activate(ignoringOtherApps: true)
+            alert.runModal()
+        }
     }
 
     @objc private func setInterval(_ sender: NSMenuItem) {
