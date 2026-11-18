@@ -311,6 +311,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         items.values.forEach { NSStatusBar.system.removeStatusItem($0) }
         items.removeAll()
         syncStatusItems()
+        // The new quote may turn stale before any pending check fires.
+        scheduleStaleCheck()
     }
 
     @objc private func removeSymbol(_ sender: NSMenuItem) {
@@ -328,6 +330,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         symbols.removeAll { $0 == sym }
         syncStatusItems()
+        // Drop a check that was only waiting for the removed symbol.
+        scheduleStaleCheck(reset: true)
     }
 
     @objc private func togglePercent() {
