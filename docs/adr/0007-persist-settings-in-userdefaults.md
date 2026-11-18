@@ -8,11 +8,11 @@ Accepted
 
 ## Context
 
-The app has three settings: the list of symbols, whether to show percent change, and the polling interval. They must survive relaunches. There is no settings window, and the data is tiny.
+The app has four settings: the list of symbols, whether to show percent change, the polling interval, and each symbol's comparison period. They must survive relaunches. There is no settings window, and the data is tiny.
 
 ## Decision
 
-Store settings in `UserDefaults.standard` (domain `com.local.StockMonitor`) under the keys `symbols` (array of strings, default `["BZ=F"]`), `showPercent` (bool, default false), and `refreshInterval` (seconds, default 60). Settings change only through the status item menus: Add Symbol, Remove, Show Percent Change, and Refresh Every.
+Store settings in `UserDefaults.standard` (domain `com.local.StockMonitor`) under the keys `symbols` (array of strings, default `["BZ=F"]`), `showPercent` (bool, default false), `refreshInterval` (seconds, default 60), and `comparePeriods` (dictionary from symbol to period label such as `"1M"`, see [0014](0014-configurable-comparison-period-per-symbol.md)). A symbol without an entry uses `1D`, which is never stored, and removing a symbol removes its entry. Settings change only through the status item menus: Add Symbol, Remove, Show Percent Change, Compare To, and Refresh Every.
 
 ## Consequences
 
