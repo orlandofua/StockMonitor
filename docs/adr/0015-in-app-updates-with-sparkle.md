@@ -90,12 +90,83 @@ Pages adds a short delay. Its CDN can cache the feed for up to about 10 minutes,
 
 ### Gatekeeper and ad-hoc signing risk
 
-- The first install still goes past Gatekeeper by hand as in 0010. The aim is that updates installed by Sparkle need no further Gatekeeper step. This, and whether library validation lets an ad-hoc signed app load an ad-hoc signed Sparkle framework, is **unproven and is to be proven by spike #28** on macOS 13, 14 and 15. #28 records its findings in the section below.
+- The first install still goes past Gatekeeper by hand as in 0010. The aim is that updates installed by Sparkle need no further Gatekeeper step. This, and whether library validation lets an ad-hoc signed app load an ad-hoc signed Sparkle framework, was tested by spike #28. Its findings and the macOS versions it could and could not cover are in the section below.
 - Sparkle cannot update an app that macOS runs from a translocated (read-only) location, such as straight from Downloads. The README keeps telling users to move the app to `/Applications` first.
 
 ### Spike findings (#28)
 
-To be filled in by #28.
+Recorded on 2026-11-18 with Sparkle 2.10.1.
+
+**Result: go.** Sparkle 2 loads in, and updates, an app built with SwiftPM and signed exactly as `build.sh` signs it today (`codesign --force --sign -`, no Hardened Runtime). The rollout (#29 to #32) continues on ad-hoc signing. #12 is not a prerequisite. Hardened Runtime must stay off until #12 lands (see below).
+
+#### How it was tested
+
+`scripts/spike/sparkle-28/run.sh` reproduces every result below. It builds a stand-in app, `SparkleSpike`, in a temporary folder. The app is a SwiftPM executable with the same `Info.plist` keys as `build.sh`, including `LSUIElement` and `LSMinimumSystemVersion` 13.0. It embeds `Sparkle.framework` in `Contents/Frameworks` and starts an `SPUUpdater`. The script never touches `build/`, `.build/`, the real app, or any keychain, and it deletes its work folder, test keys and preferences at the end.
+
+```sh
+scripts/spike/sparkle-28/run.sh all         # or: update | quarantine | negative | hardened
+SPIKE_KEEP=1 scripts/spike/sparkle-28/run.sh update   # keep the work folder to inspect it
+```
+
+The script does the following steps:
+
+1. Builds the package with `swift build -c release`. Sparkle comes from SwiftPM (`.package(url: "https://github.com/sparkle-project/Sparkle", exact: "2.10.1")`).
+2. Makes a throwaway ed25519 key pair with `make-test-key.swift` (CryptoKit). The private key is the base64 32-byte seed, the same format `generate_keys -x` exports. `generate_keys` itself was not used, because it always stores the key in the login keychain. `sign_update --ed-key-file` accepts this key, and Sparkle verifies its signatures.
+3. Builds v0.0.1 (`CFBundleVersion` 1) and v0.0.2 (`CFBundleVersion` 2) with `SUFeedURL` = `http://127.0.0.1:8765/appcast.xml` and `SUPublicEDKey` set to the test public key. The framework is copied with `ditto`, and then the bundle is signed once with `codesign --force --sign - SparkleSpike.app`.
+4. Zips v0.0.2 with `ditto -c -k --sequesterRsrc --keepParent`, as the release workflow does. It signs the zip with `sign_update --ed-key-file private.seed -p`, writes `appcast.xml`, and serves both with `python3 -m http.server 8765 --bind 127.0.0.1`.
+5. Unzips v0.0.1 into an install folder and starts it with `open`. A spike-only user driver answers "install" to every Sparkle prompt, so the full check, download, verify, install and relaunch path runs without clicks. Sparkle's standard user driver (`SPUStandardUpdaterController`, #30) was not exercised. It uses the same downloader and installer.
+
+#### Results
+
+| Scenario | macOS 27.0.1 (26A434), this Mac, SIP on | macOS 15.8.2 (24H232), GitHub `macos-15`, SIP off | macOS 26.7.2 (25G332), GitHub `macos-26`, SIP off |
+| --- | --- | --- | --- |
+| Signed like `build.sh`: framework loads, v0.0.1 updates and relaunches as v0.0.2 | Pass | Pass | Pass |
+| Same, after a download with `com.apple.quarantine` set (first launch bypassed with `xattr -dr`) | Pass | Pass | Pass |
+| EdDSA signature changed by one character | Rejected | Rejected | Rejected |
+| No EdDSA signature in the feed | Rejected | Rejected | Rejected |
+| Zip replaced after signing (valid signature of the original zip) | Rejected | Rejected | Rejected |
+| One byte of the signed zip flipped | Rejected | Rejected | Rejected |
+| Hardened Runtime on (`--options runtime`), ad hoc | Framework does not load | Loads (SIP off, not meaningful) | Loads (SIP off, not meaningful) |
+| Hardened Runtime + `com.apple.security.cs.disable-library-validation` | Pass | Pass | Pass |
+
+What "Pass" means. Sparkle found v0.0.2 and downloaded it, and EdDSA validation passed. Sparkle quit v0.0.1, replaced the bundle in place, and relaunched it within about one second. Afterwards:
+
+- the installed `CFBundleVersion` is 2;
+- the relaunched process reports version 2;
+- the updated bundle passes `codesign --verify --deep --strict`;
+- no file in the updated bundle has `com.apple.quarantine` (only `com.apple.provenance`).
+
+No Gatekeeper prompt appeared on the relaunch. `spctl --assess --type execute` rejects every ad-hoc bundle, before and after the update. That is expected for an un-notarized app and does not block launching a bundle without the quarantine attribute.
+
+What "Rejected" means. Sparkle reported `SUSparkleErrorDomain` 4005 ("The update is improperly signed and could not be validated"), with an underlying 3002 error naming the EdDSA mismatch or the missing signature. v0.0.2 never ran, the installed `CFBundleVersion` stayed 1, and v0.0.1 kept running.
+
+#### Details for #29
+
+- **Framework signature.** The `Sparkle.framework` in Sparkle's SwiftPM artifact is already ad-hoc signed, with the runtime flag set (`flags=0x10002(adhoc,runtime)`). Copy it with `ditto`, which keeps the `Versions/Current` symlinks, and then sign the app bundle once with the existing `codesign --force --sign -`. `--deep` and re-signing the framework are not needed. The result passes `codesign --verify --deep --strict`.
+- **rpath.** SwiftPM does not add `@executable_path/../Frameworks`. Without it the binary cannot find the framework. The spike passes `-Xlinker -rpath -Xlinker @executable_path/../Frameworks` through `linkerSettings: [.unsafeFlags(...)]`. That is allowed in a root package. The same flags can be passed to `swift build` in `build.sh` instead.
+- **Silent signing failures.** `build.sh` runs `codesign ... >/dev/null 2>&1 || true`, so a signing failure is hidden. Once the bundle contains a framework, a bad signature breaks updates. #29 should let `codesign` fail the build and add `codesign --verify --deep --strict`.
+- **Tools.** `sign_update` and `generate_keys` ship in the same SwiftPM artifact (`.build/artifacts/sparkle/Sparkle/bin`). The release job (#31) needs no separate download. `sign_update --ed-key-file -` reads the key from standard input, which suits a GitHub secret.
+- **Feed URL.** An `http://127.0.0.1` feed worked for the spike. Production uses the HTTPS Pages URL above.
+
+#### Hardened Runtime
+
+On macOS 27.0.1 with SIP on, an ad-hoc app signed with `--options runtime` does not start. dyld refuses the embedded framework: "mapping process and mapped file (non-platform) have different Team IDs". Ad-hoc code has no Team ID, so Library Validation always fails. Adding the `com.apple.security.cs.disable-library-validation` entitlement fixes the load, and updates then work. The hosted runners run with SIP disabled, where Library Validation is not enforced, so their "loads" result says nothing about real Macs. Decision: keep `build.sh` without `--options runtime`. If Hardened Runtime is wanted before #12, it needs that entitlement. With Developer ID (#12) the app and the re-signed framework share a Team ID, so the entitlement is not needed.
+
+#### Not covered
+
+- **macOS 13 and 14 were not tested.** No Mac with those versions was available. GitHub no longer offers `macos-13` and `macos-14` runners: `macos-14` failed with "The configuration 'macos-14-arm64-us-default' is not supported", and `macos-13` never got a runner. Nothing found suggests they behave differently, because the passing path uses no Hardened Runtime and therefore no Library Validation. This is an assumption.
+- **macOS 15 was tested only on a hosted runner with SIP disabled.** The update mechanics and EdDSA checks are covered there. Gatekeeper and code-signing enforcement on a normal macOS 15 Mac are not.
+- **First launch through "Open Anyway"** in System Settings was not tested, because it needs a click. That path keeps the quarantine attribute on the installed copy, with the user's approval recorded. The spike only covered the `xattr -dr` bypass. In every run the updated bundle had no quarantine attribute, so the result should not depend on how the first launch was approved. This needs a manual check.
+- **Sparkle's standard update window** and the opt-in automatic install were not exercised. They belong to #30.
+
+To fill these gaps, the owner can run `scripts/spike/sparkle-28/run.sh all` on any Mac running macOS 13, 14 or 15 with SIP on. On one of them, also do the manual "Open Anyway" check:
+
+1. Run `SPIKE_KEEP=1 scripts/spike/sparkle-28/run.sh update` once, to get a work folder with the test key and the server.
+2. Stop it, then serve the work folder's `www` again with `python3 -m http.server 8765 --bind 127.0.0.1`.
+3. Copy `v1.zip` to `~/Downloads` through a browser, or tag it with `xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Safari;"`, and unzip it in Finder into `/Applications`.
+4. Open v0.0.1 and approve it with Open Anyway.
+5. Confirm it updates to v0.0.2 and relaunches with no further Gatekeeper prompt.
+6. Clean up: delete `/Applications/SparkleSpike.app`, stop the server, delete the work folder, and run `defaults delete com.local.SparkleSpike28`.
 
 ## Consequences
 
@@ -105,5 +176,5 @@ To be filled in by #28.
 - Release downloads and the feed are public. Anyone can download a build without a GitHub account. The README's note that the repository is private becomes wrong and is updated with #32.
 - The EdDSA private key is a single point of failure. Losing it strands installed copies, and the backup is the owner's responsibility. With ad-hoc signing it cannot be rotated through an update.
 - Every merged release reaches users quickly, so a bad merge spreads fast. Recovery is to remove the feed entry and ship a fix.
-- The whole plan depends on spike #28. If it fails, Developer ID and notarization (#12) and the Apple Developer Program fee come first.
+- The plan depended on spike #28, which passed on ad-hoc signing without Hardened Runtime. Turning on Hardened Runtime before Developer ID (#12) would break loading the framework unless library validation is disabled by entitlement.
 - Rollout follows these issues: #28 (spike), #29 (embed Sparkle), #30 (menu item and daily checks), #31 (sign and publish the feed), #32 (user docs), and later #33 (Intel).
