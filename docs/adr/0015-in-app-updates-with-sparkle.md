@@ -16,7 +16,7 @@ The repository was made public on 2026-11-18 so that an update feed and its zips
 
 Sparkle is the standard open-source updater for macOS apps distributed outside the App Store. Sparkle 2 checks an RSS feed (the appcast), downloads the update, verifies it with an EdDSA (ed25519) signature, replaces the app, and relaunches it. It can be added as a Swift package, which fits the SwiftPM build in 0002.
 
-Release builds are ad-hoc signed and not notarized (0010). Sparkle's documentation warns that ad-hoc signed apps may fail to load the framework or to install updates because of library validation and code-signing checks. Whether Sparkle works with this app's bundle has not been tested yet; spike #28 tests it.
+Release builds are ad-hoc signed and not notarized (0010). Sparkle's documentation warns that ad-hoc signed apps may fail to load the framework when Library Validation is on, which happens when the app is signed with the Hardened Runtime. `build.sh` currently signs with `codesign --force --sign -` and no `--options runtime`, so Hardened Runtime and Library Validation are off. Whether Sparkle works with this app's bundle has not been tested yet; spike #28 tests it with the signing options `build.sh` actually uses, and also records what happens if Hardened Runtime is turned on later.
 
 `build.sh` puts the semver from the release label (0009) in `CFBundleShortVersionString` and the release workflow's run number in `CFBundleVersion`. Sparkle compares `CFBundleVersion` values to decide whether an update is newer.
 
@@ -68,7 +68,7 @@ Pages adds a short delay. Its CDN can cache the feed for up to about 10 minutes,
 
 - **Default:** Sparkle does **not wait** for Developer ID signing and notarization. It ships on the current ad-hoc signing plus EdDSA, **if spike #28 passes**. The EdDSA signature, not the code signature, is what proves an update came from the release job.
 - If #28 shows Sparkle cannot load or install updates on an ad-hoc signed app on a supported macOS version, the rollout (#29 to #32) stops, and #12 (Developer ID and notarization) becomes a prerequisite. That would need a new or amended ADR.
-- #12 is revisited after Sparkle ships. When it lands, Sparkle keeps working: the EdDSA key stays the same, and switching code signing from ad-hoc to Developer ID is allowed because the update is still signed with the trusted EdDSA key.
+- #12 is revisited after Sparkle ships. **Assumption, not yet verified:** when #12 lands, Sparkle keeps working, because the EdDSA key stays the same and the update is still signed with it. Sparkle documents changing the code-signing certificate only for apps that are already Developer ID signed, not a move from ad-hoc to Developer ID. #12 must test this update path (an ad-hoc installed copy updating to a Developer ID signed release) before it ships.
 
 ### Intel support
 
@@ -78,7 +78,7 @@ Pages adds a short delay. Its CDN can cache the feed for up to about 10 minutes,
 
 - **Default:** **every merged release goes into the feed**, as soon as its release run finishes. Patches are not batched. A merge labeled `skip-release` makes no release and leaves the feed unchanged.
 - There is **no beta channel** for now. A channel can be added later with Sparkle's `sparkle:channel` element without changing the feed URL.
-- Each feed item sets `sparkle:minimumSystemVersion` to `13.0`, matching `LSMinimumSystemVersion`, and links to the GitHub release page for its notes.
+- Each feed item sets `sparkle:minimumSystemVersion` to `13.0.0`, matching `LSMinimumSystemVersion`, and links to the GitHub release page for its notes.
 
 ### Bad-release recovery
 
