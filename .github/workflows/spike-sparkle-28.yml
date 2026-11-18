@@ -15,7 +15,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-13, macos-14, macos-15, macos-26]
+        os: [macos-15, macos-26]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     steps:
@@ -24,6 +24,9 @@ jobs:
         run: |
           sw_vers
           swift --version
+          csrutil status || true
+          spctl --status || true
+          nvram boot-args 2>/dev/null || echo "no boot-args"
       - name: Run spike
         env:
           SPIKE_WORK: ${{ runner.temp }}/spike

@@ -283,13 +283,13 @@ run_hardened() {
     # Expected to fail: Library Validation refuses an ad hoc framework (no Team ID).
     local dyld
     : >"$LOG"
-    dyld="$("$INSTALL/$APP_NAME.app/Contents/MacOS/$APP_NAME" 2>&1 & sleep 3; stop_app)"
+    dyld="$( ("$INSTALL/$APP_NAME.app/Contents/MacOS/$APP_NAME" & sleep 3; kill $! 2>/dev/null) 2>&1 || true)"
     if grep -q "launched" "$LOG" 2>/dev/null; then
         say "hardened: UNEXPECTED: v0.0.1 started and loaded Sparkle.framework"
         stop_app
     else
         say "hardened: as expected, v0.0.1 cannot load Sparkle.framework:"
-        printf '%s\n' "$dyld" | grep -oE "not valid for use in process: [^)]*" | head -1 | sed 's/^/    /' | tee -a "$RESULTS"
+        printf '%s\n' "$dyld" | grep -oE "not valid for use in process: [^']*" | head -1 | sed 's/^/    /' | tee -a "$RESULTS"
     fi
     : >"$LOG"
 
