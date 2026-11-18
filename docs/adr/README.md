@@ -16,5 +16,6 @@ This folder records the significant architecture decisions behind StockMonitor, 
 | [0010](0010-distribute-unnotarized-builds-on-github-releases.md) | Distribute un-notarized builds on GitHub Releases | Accepted |
 | [0011](0011-mark-stale-quotes.md) | Mark stale quotes | Accepted |
 | [0012](0012-launch-at-login-with-smappservice.md) | Launch at login with SMAppService | Accepted |
+| [0013](0013-use-conventional-commits.md) | Use Conventional Commits for commit messages and PR titles | Accepted |
 
 To add a decision, copy the structure of an existing record, use the next number, and add it to the table. When a decision is replaced, mark the old record "Superseded by NNNN" rather than deleting it.

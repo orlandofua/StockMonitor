@@ -67,6 +67,8 @@ Run the unit tests with `./test.sh`.
 
 Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
+Commit messages and pull request titles follow [Conventional Commits](CONTRIBUTING.md#commit-messages), checked on every pull request by `.github/workflows/commit-lint.yml`. Run `scripts/install-hooks.sh` once to check them locally as you commit.
+
 ## Releases
 
 Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/release.yml` when a pull request is merged into `main`. Each release has two assets: `StockMonitor-vX.Y.Z.zip`, the zipped `StockMonitor.app`, and `StockMonitor-vX.Y.Z.zip.sha256`, its SHA-256 checksum. The pull request's label picks the bump:
