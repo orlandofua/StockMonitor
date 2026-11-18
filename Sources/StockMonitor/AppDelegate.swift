@@ -237,26 +237,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func addSymbol() {
-        let alert = NSAlert()
-        alert.messageText = "Add Symbol"
-        alert.informativeText = "Enter a Yahoo Finance ticker (e.g. AAPL, BZ=F, BTC-USD, ^GSPC)."
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 220, height: 24))
-        field.placeholderString = "Symbol"
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Add")
-        alert.addButton(withTitle: "Cancel")
-        alert.window.initialFirstResponder = field
-        NSApp.activate(ignoringOtherApps: true)
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-
-        let sym = field.stringValue.trimmingCharacters(in: .whitespaces).uppercased()
-        guard !sym.isEmpty, !symbols.contains(sym) else { return }
+        // The dialog checks the symbol with Yahoo and only returns one that has a quote.
+        guard let added = AddSymbolDialog.run(existing: symbols) else { return }
+        let sym = added.symbol
         symbols.append(sym)
+        // Use the quote from the check so the new item shows its price immediately.
+        quotes[sym] = added.quote
+        lastPoll[sym] = added.quote.fetchedAt
+        errors.remove(sym)
         // Rebuild all items so menu bar order matches the list order.
         items.values.forEach { NSStatusBar.system.removeStatusItem($0) }
         items.removeAll()
         syncStatusItems()
-        refresh(force: true)
     }
 
     @objc private func removeSymbol(_ sender: NSMenuItem) {

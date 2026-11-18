@@ -55,7 +55,7 @@ Click any ticker in the menu bar to:
 
 - See the full name, price, change, previous close, and last update time
 - Refresh now (⌘R)
-- Add a symbol (⌘N), using any Yahoo Finance ticker such as `AAPL`, `BZ=F`, `BTC-USD`, or `^GSPC`
+- Add a symbol (⌘N), using any Yahoo Finance ticker such as `AAPL`, `BZ=F`, `BTC-USD`, or `^GSPC`. The ticker is checked with Yahoo first: an unknown one shows "Symbol not found" and a network problem shows its own message, and the dialog stays open so you can fix it or cancel
 - Remove the symbol
 - Toggle between point and percent change
 - See whether the symbol is streaming live or being polled
