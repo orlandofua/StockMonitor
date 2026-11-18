@@ -91,11 +91,16 @@ Click any ticker in the menu bar to:
 - Toggle between point and percent change
 - See whether the symbol is streaming live or being polled
 - Set the polling interval (15s, 30s, 1m, or 5m)
+- Turn **Launch at Login** on or off
 
 Symbols and settings persist between launches.
+
+### Start at login
+
+Choose **Launch at Login** in any ticker menu. A checkmark means StockMonitor opens when you log in. The menu reads the setting from macOS each time it opens, so it also reflects changes made in System Settings › General › Login Items. If macOS asks you to approve the login item, the box shows a dash and clicking it opens Login Items, where you can allow StockMonitor. If macOS refuses the change, an alert says why.
+
+Move `StockMonitor.app` to `/Applications` before turning this on, because the login item points at the copy of the app you turned it on from. You can still add the app by hand under System Settings › General › Login Items.
 
 ## Architecture
 
 Design decisions are recorded as ADRs in [`docs/adr`](docs/adr/README.md).
-
-To start at login, move `StockMonitor.app` to `/Applications` and add it under System Settings › General › Login Items.
