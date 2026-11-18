@@ -1,0 +1,34 @@
+# TEMPORARY, spike #28 only. Removed again before the pull request is ready.
+name: Spike Sparkle 28
+
+on:
+  push:
+    branches: [chore/28-sparkle-adhoc-spike]
+    paths: [scripts/spike/**, .github/workflows/spike-sparkle-28.yml]
+
+permissions:
+  contents: read
+
+jobs:
+  spike:
+    name: Sparkle spike on ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-13, macos-14, macos-15, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - name: Show system
+        run: |
+          sw_vers
+          swift --version
+      - name: Run spike
+        env:
+          SPIKE_WORK: ${{ runner.temp }}/spike
+          SPIKE_KEEP: "1"
+        run: scripts/spike/sparkle-28/run.sh all
+      - name: Show results
+        if: always()
+        run: cat "$RUNNER_TEMP/spike/results.txt" || true
