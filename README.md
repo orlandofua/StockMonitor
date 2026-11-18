@@ -13,6 +13,8 @@ Each symbol gets its own menu bar item, with a green or red badge for the daily 
 
 After the Mac wakes from sleep, or when the network connection comes back, every symbol is polled again within a few seconds, so prices that do not stream do not sit at their old value until the next scheduled poll.
 
+If a symbol stops updating (no live stream and no successful poll for twice the polling interval, or 5 minutes, whichever is longer), its ticker turns gray and its menu shows "Stale: last update …" with the last error, such as "timeout" or "offline". It returns to normal with the next successful update.
+
 ## Install
 
 Requirements: macOS 13 (Ventura) or later on a Mac with Apple silicon (M1 or newer). Release builds are arm64 only and do not run on Intel Macs; on an Intel Mac, [build from source](#build-and-run) instead.
@@ -82,7 +84,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md#release-labels) for which label to pick. L
 
 Click any ticker in the menu bar to:
 
-- See the full name, price, change, previous close, and last update time
+- See the full name, price, change, previous close, and last update time, plus the last error when a poll failed
 - Refresh now (⌘R)
 - Add a symbol (⌘N), using any Yahoo Finance ticker such as `AAPL`, `BZ=F`, `BTC-USD`, or `^GSPC`. The ticker is checked with Yahoo first: an unknown one shows "Symbol not found" and a network problem shows its own message, and the dialog stays open so you can fix it or cancel
 - Remove the symbol
