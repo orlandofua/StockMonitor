@@ -18,6 +18,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// Drives the stale state; see `Staleness`.
     private var lastUpdate: [String: Date] = [:]
     private var timer: Timer?
+    /// One-shot timer that redraws tickers when the next quote crosses the stale
+    /// threshold, so the menu bar does not wait for the poll timer. Never polls.
+    private var staleTimer: Timer?
 
     // Live streaming (see docs/adr/0005). Polling remains the fallback.
     private let stream = QuoteStream()
@@ -63,6 +66,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh(force: true)
         scheduleTimer()
         observeWakeAndNetwork()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        timer?.invalidate()
+        staleTimer?.invalidate()
     }
 
     private func observeWakeAndNetwork() {
@@ -129,6 +137,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func scheduleTimer() {
         timer?.invalidate()
         timer = Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in self?.refresh(force: false) }
+        // The stale threshold depends on the interval.
+        scheduleStaleCheck(reset: true)
+    }
+
+    /// Schedules a redraw for the moment the next quote turns stale (issue #9).
+    ///
+    /// Without `reset`, an already scheduled check is kept when it fires no later
+    /// than needed. Update times only move forward, so firing early is harmless:
+    /// the handler redraws and schedules again.
+    private func scheduleStaleCheck(reset: Bool = false) {
+        let updates = symbols.compactMap { quotes[$0] != nil ? lastUpdate[$0] : nil }
+        let next = Staleness.nextRecheck(lastUpdates: updates, pollInterval: interval, now: Date())
+        if !reset, let current = staleTimer, current.isValid, let next, current.fireDate <= next { return }
+        staleTimer?.invalidate()
+        staleTimer = nil
+        guard let next else { return }
+        let check = Timer(fire: next, interval: 0, repeats: false) { [weak self] _ in
+            guard let self else { return }
+            symbols.forEach(render)
+            scheduleStaleCheck(reset: true)
+        }
+        // Common modes, so the ticker still turns gray while a menu is open.
+        RunLoop.main.add(check, forMode: .common)
+        staleTimer = check
     }
 
     private func isLive(_ sym: String) -> Bool {
@@ -173,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     }
                     lastUpdate[sym] = Date()
                     lastError[sym] = nil
+                    scheduleStaleCheck()
                 } catch {
                     // Record the failure even when an older quote is still shown,
                     // so the menu can say why the price stopped updating.
@@ -194,6 +227,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         lastTickReceived[sym] = Date()
         lastUpdate[sym] = Date()
         lastError[sym] = nil
+        scheduleStaleCheck()
         render(sym)
     }
 
@@ -305,7 +339,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         guard let secs = sender.representedObject as? Double else { return }
         interval = secs
         scheduleTimer()
-        // The stale threshold depends on the interval.
+        // The stale threshold depends on the interval; redraw now, and
+        // scheduleTimer has moved the stale check to the new threshold.
         symbols.forEach(render)
     }
 }

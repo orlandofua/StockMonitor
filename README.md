@@ -13,7 +13,7 @@ Each symbol gets its own menu bar item, with a green or red badge for the daily 
 
 After the Mac wakes from sleep, or when the network connection comes back, every symbol is polled again within a few seconds, so prices that do not stream do not sit at their old value until the next scheduled poll.
 
-If a symbol stops updating (no live stream and no successful poll for twice the polling interval, or 5 minutes, whichever is longer), its ticker turns gray and its menu shows "Stale: last update …" with the last error, such as "timeout" or "offline". It returns to normal with the next successful update.
+If a symbol stops updating (no live stream and no successful poll for twice the polling interval, or 5 minutes, whichever is longer), its ticker turns gray as soon as that time passes and its menu shows "Stale: last update …" with the last error, such as "timeout" or "offline". It returns to normal with the next successful update.
 
 ## Install
 

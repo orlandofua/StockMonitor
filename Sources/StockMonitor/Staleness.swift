@@ -27,6 +27,27 @@ enum Staleness {
         return now.timeIntervalSince(lastUpdate) > threshold(pollInterval: pollInterval)
     }
 
+    /// How long after the threshold the menu bar re-checks, so the check lands
+    /// safely past the moment `isStale` turns true (it compares with `>`).
+    static let recheckMargin: TimeInterval = 1
+
+    /// When the menu bar should next redraw so a ticker turns gray right at its
+    /// threshold, instead of waiting for the next poll timer tick.
+    ///
+    /// Returns the earliest moment, after `now`, at which one of `lastUpdates`
+    /// crosses the threshold (plus `recheckMargin`), or `nil` if none will.
+    /// Quotes that are already stale are skipped. Live symbols may be passed in:
+    /// a redraw while they are still live changes nothing, and the caller then
+    /// asks again with their newer update times.
+    static func nextRecheck(lastUpdates: [Date], pollInterval: TimeInterval, now: Date) -> Date? {
+        let limit = threshold(pollInterval: pollInterval)
+        return lastUpdates
+            .map { $0.addingTimeInterval(limit) }
+            .filter { $0 >= now }
+            .min()?
+            .addingTimeInterval(recheckMargin)
+    }
+
     /// A short description of why a poll failed, for the menu ("timeout", "offline", "HTTP 503").
     static func errorSummary(_ error: Error) -> String {
         switch error {

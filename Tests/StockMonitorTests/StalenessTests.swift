@@ -57,6 +57,40 @@ struct StalenessTests {
         #expect(!Staleness.isStale(lastUpdate: Self.now, isLive: false, pollInterval: 60, now: Self.now))
     }
 
+    // MARK: nextRecheck
+
+    @Test func recheckLandsJustPastTheThreshold() {
+        // Updated 60 s ago with 1 minute polling: stale 240 s from now.
+        let next = Staleness.nextRecheck(lastUpdates: [Self.ago(60)], pollInterval: 60, now: Self.now)
+        #expect(next == Self.now.addingTimeInterval(240 + Staleness.recheckMargin))
+        // At that moment the quote really is stale, and a moment before it is not.
+        #expect(Staleness.isStale(lastUpdate: Self.ago(60), isLive: false, pollInterval: 60, now: next!))
+        #expect(!Staleness.isStale(lastUpdate: Self.ago(60), isLive: false, pollInterval: 60,
+                                   now: Self.now.addingTimeInterval(240)))
+    }
+
+    @Test func recheckFollowsTheLongerThresholdForSlowPolling() {
+        // 5 minute polling: 10 minute threshold, not 5 + one interval.
+        let next = Staleness.nextRecheck(lastUpdates: [Self.now], pollInterval: 300, now: Self.now)
+        #expect(next == Self.now.addingTimeInterval(600 + Staleness.recheckMargin))
+    }
+
+    @Test func recheckPicksTheEarliestSymbol() {
+        let next = Staleness.nextRecheck(lastUpdates: [Self.ago(10), Self.ago(200), Self.ago(100)],
+                                         pollInterval: 60, now: Self.now)
+        #expect(next == Self.now.addingTimeInterval(100 + Staleness.recheckMargin))
+    }
+
+    @Test func recheckSkipsQuotesThatAreAlreadyStale() {
+        let next = Staleness.nextRecheck(lastUpdates: [Self.ago(900), Self.ago(30)], pollInterval: 60, now: Self.now)
+        #expect(next == Self.now.addingTimeInterval(270 + Staleness.recheckMargin))
+        #expect(Staleness.nextRecheck(lastUpdates: [Self.ago(900)], pollInterval: 60, now: Self.now) == nil)
+    }
+
+    @Test func noRecheckWithoutQuotes() {
+        #expect(Staleness.nextRecheck(lastUpdates: [], pollInterval: 60, now: Self.now) == nil)
+    }
+
     // MARK: Error summary
 
     @Test func errorSummaries() {
