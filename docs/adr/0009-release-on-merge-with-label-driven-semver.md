@@ -10,6 +10,8 @@ Accepted
 
 There was no way to ship a build. The version was hard-coded as `1.0` in `build.sh`, and nothing produced a downloadable app. Every change reaches `main` through a reviewed pull request that CI has checked (ADR 0008), so a merged pull request is a natural release point. Commit messages in this repo are free-form, so versions cannot be derived from conventional commits without adding a new commit rule and a parser.
 
+Note (2026-11-18): ADR [0013](0013-use-conventional-commits.md) has since made Conventional Commits the rule for new commits and pull request titles. The label-driven decision below is unchanged.
+
 ## Decision
 
 - Add `.github/workflows/release.yml`, triggered by `pull_request` `closed` on `main`, that runs only when the pull request was merged. The event carries the pull request's labels, so no API lookup is needed.

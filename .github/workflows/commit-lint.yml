@@ -1,0 +1,47 @@
+name: Commit messages
+
+# Checks that every new commit and the pull request title follow Conventional
+# Commits. The title matters because a squash merge uses it as the commit
+# message on main. See docs/adr/0013-use-conventional-commits.md.
+#
+# This lives apart from ci.yml so that editing a title re-runs only this quick
+# check, not the macOS test and build job.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: commit-lint-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  commit-lint:
+    name: Conventional Commits
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check out with history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check the pull request title
+        if: ${{ !cancelled() }}
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          echo "Title: $PR_TITLE"
+          if ! printf '%s\n' "$PR_TITLE" | ./scripts/check-commit-msg.sh; then
+            echo "::error::The pull request title does not follow Conventional Commits. Edit the title; the check re-runs on its own."
+            exit 1
+          fi
+
+      - name: Check the commits in the pull request
+        if: ${{ !cancelled() }}
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: ./scripts/check-commits.sh "$BASE_SHA" "$HEAD_SHA"
