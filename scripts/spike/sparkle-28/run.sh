@@ -8,13 +8,23 @@
 # Nothing here touches build/, .build/, the real app, or any keychain.
 #
 # Usage: scripts/spike/sparkle-28/run.sh [all|update|negative|hardened|quarantine]
-#   SPIKE_WORK  work folder (default: $TMPDIR/sparkle-spike-28). Deleted at the end
-#               unless SPIKE_KEEP=1.
-#   SPIKE_PORT  local HTTP port (default 8765)
+#   SPIKE_WORK  work folder (default: $TMPDIR/sparkle-spike-28). Its name must start
+#               with "sparkle-spike", because the script deletes it. Deleted at the
+#               end unless SPIKE_KEEP=1. SwiftPM's cache and temporary files also go
+#               in it, so nothing is left behind elsewhere.
+#   SPIKE_PORT  local HTTP port (default 8765). Must be free.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="${SPIKE_WORK:-${TMPDIR:-/tmp}/sparkle-spike-28}"
+# The script runs rm -rf on WORK, so refuse anything not named for the spike.
+case "$(basename "$WORK")" in
+    sparkle-spike*) ;;
+    *) echo "SPIKE_WORK must be a folder whose name starts with sparkle-spike: $WORK" >&2; exit 2 ;;
+esac
+# Resolve symlinks (/var -> /private/var) so the path matches what pgrep sees.
+mkdir -p "$WORK"
+WORK="$(cd "$WORK" && pwd -P)"
 PORT="${SPIKE_PORT:-8765}"
 MODE="${1:-all}"
 BUNDLE_ID=com.local.SparkleSpike28
@@ -41,12 +51,13 @@ cleanup() {
     stop_app
     [[ -n "$SERVER_PID" ]] && kill "$SERVER_PID" 2>/dev/null || true
     defaults delete "$BUNDLE_ID" >/dev/null 2>&1 || true
+    # defaults delete leaves an empty plist behind.
+    rm -f "$HOME/Library/Preferences/$BUNDLE_ID.plist"
     rm -rf "$HOME/Library/Caches/$BUNDLE_ID" "$HOME/Library/HTTPStorages/$BUNDLE_ID" \
         "$HOME/Library/Application Support/$BUNDLE_ID"
-    if [[ "${SPIKE_KEEP:-0}" != 1 ]]; then
-        cp "$RESULTS" "${TMPDIR:-/tmp}/sparkle-spike-28-results.txt" 2>/dev/null || true
-        rm -rf "$WORK"
-    fi
+    # Results were printed as the run went. Keep the folder with SPIKE_KEEP=1 to reread them.
+    [[ "${SPIKE_KEEP:-0}" != 1 ]] && rm -rf "$WORK"
+    return 0
 }
 trap cleanup EXIT
 
@@ -65,14 +76,20 @@ installed_build() {
 }
 
 prepare() {
+    if lsof -nP -iTCP:"$PORT" -sTCP:LISTEN >/dev/null 2>&1; then
+        echo "port $PORT is already in use; set SPIKE_PORT to a free port" >&2
+        exit 2
+    fi
     rm -rf "$WORK"
-    mkdir -p "$WORK" "$WWW" "$INSTALL" "$WORK/keys"
+    mkdir -p "$WORK" "$WWW" "$INSTALL" "$WORK/keys" "$WORK/tmp"
+    # Keep SwiftPM's temporary files and download cache inside the work folder.
+    export TMPDIR="$WORK/tmp"
     : >"$RESULTS"
     say "== Spike #28 run $(date -u +%Y-%m-%dT%H:%M:%SZ)"
     say "macOS: $(sw_vers -productVersion) ($(sw_vers -buildVersion)), $(uname -m)"
     say "Swift: $(swift --version 2>/dev/null | head -1)"
     rsync -a --exclude .build "$HERE/" "$WORK/pkg/"
-    (cd "$WORK/pkg" && swift build -c release 2>&1 | grep -E "error|Compiling|Build complete" | tail -3)
+    (cd "$WORK/pkg" && swift build -c release --cache-path "$WORK/spm-cache" 2>&1 | grep -E "error|Compiling|Build complete" | tail -3)
     SPARKLE_ROOT="$WORK/pkg/.build/artifacts/sparkle/Sparkle"
     FRAMEWORK="$SPARKLE_ROOT/Sparkle.xcframework/macos-arm64_x86_64/Sparkle.framework"
     SIGN_UPDATE="$SPARKLE_ROOT/bin/sign_update"
@@ -83,7 +100,14 @@ prepare() {
     PUBLIC_KEY="$(cat "$WORK/keys/public.key")"
     python3 -m http.server "$PORT" --bind 127.0.0.1 --directory "$WWW" >"$WORK/http.log" 2>&1 &
     SERVER_PID=$!
-    sleep 1
+    local i
+    for ((i = 0; i < 10; i++)); do
+        curl -fsS -o /dev/null "http://127.0.0.1:$PORT/" 2>/dev/null && return 0
+        sleep 0.5
+    done
+    echo "the local HTTP server did not start on port $PORT; see $WORK/http.log" >&2
+    SPIKE_KEEP=1
+    exit 2
 }
 
 # make_bundle <outdir> <short version> <build> <check on launch: true|false> [extra codesign args]
@@ -285,10 +309,15 @@ run_hardened() {
     : >"$LOG"
     dyld="$( ("$INSTALL/$APP_NAME.app/Contents/MacOS/$APP_NAME" & sleep 3; kill $! 2>/dev/null) 2>&1 || true)"
     if grep -q "launched" "$LOG" 2>/dev/null; then
-        say "hardened: UNEXPECTED: v0.0.1 started and loaded Sparkle.framework"
+        # With SIP off, Library Validation is not enforced, so loading proves nothing.
+        if csrutil status 2>/dev/null | grep -q "enabled"; then
+            fail "hardened: UNEXPECTED: v0.0.1 started and loaded Sparkle.framework with SIP on"
+        else
+            say "hardened: v0.0.1 loaded Sparkle.framework, but SIP is off, so this is not meaningful"
+        fi
         stop_app
     else
-        say "hardened: as expected, v0.0.1 cannot load Sparkle.framework:"
+        pass "hardened: as expected, v0.0.1 cannot load Sparkle.framework:"
         printf '%s\n' "$dyld" | grep -oE "not valid for use in process: [^']*" | head -1 | sed 's/^/    /' | tee -a "$RESULTS"
     fi
     : >"$LOG"

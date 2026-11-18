@@ -101,11 +101,12 @@ Recorded on 2026-11-18 with Sparkle 2.10.1.
 
 #### How it was tested
 
-`scripts/spike/sparkle-28/run.sh` reproduces every result below. It builds a stand-in app, `SparkleSpike`, in a temporary folder. The app is a SwiftPM executable with the same `Info.plist` keys as `build.sh`, including `LSUIElement` and `LSMinimumSystemVersion` 13.0. It embeds `Sparkle.framework` in `Contents/Frameworks` and starts an `SPUUpdater`. The script never touches `build/`, `.build/`, the real app, or any keychain, and it deletes its work folder, test keys and preferences at the end.
+`scripts/spike/sparkle-28/run.sh` reproduces every result below. It builds a stand-in app, `SparkleSpike`, in a temporary folder. The app is a SwiftPM executable with the same `Info.plist` keys as `build.sh`, including `LSUIElement` and `LSMinimumSystemVersion` 13.0. It embeds `Sparkle.framework` in `Contents/Frameworks` and starts an `SPUUpdater`. The script never touches `build/`, `.build/`, the real app, or any keychain. It keeps SwiftPM's download cache and temporary files inside its work folder, and at the end it deletes that folder, the test keys, and the spike's preferences and caches. It refuses a `SPIKE_WORK` folder whose name does not start with `sparkle-spike`, because it deletes that folder, and it stops if the HTTP port is already in use. On a Mac with SIP on, a Hardened Runtime build that unexpectedly loads the framework counts as a failure.
 
 ```sh
 scripts/spike/sparkle-28/run.sh all         # or: update | quarantine | negative | hardened
-SPIKE_KEEP=1 scripts/spike/sparkle-28/run.sh update   # keep the work folder to inspect it
+SPIKE_KEEP=1 scripts/spike/sparkle-28/run.sh update   # keep the work folder (and results.txt) to inspect it
+SPIKE_PORT=8800 scripts/spike/sparkle-28/run.sh all   # if port 8765 is taken
 ```
 
 The script does the following steps:
@@ -159,14 +160,14 @@ On macOS 27.0.1 with SIP on, an ad-hoc app signed with `--options runtime` does 
 - **First launch through "Open Anyway"** in System Settings was not tested, because it needs a click. That path keeps the quarantine attribute on the installed copy, with the user's approval recorded. The spike only covered the `xattr -dr` bypass. In every run the updated bundle had no quarantine attribute, so the result should not depend on how the first launch was approved. This needs a manual check.
 - **Sparkle's standard update window** and the opt-in automatic install were not exercised. They belong to #30.
 
-To fill these gaps, the owner can run `scripts/spike/sparkle-28/run.sh all` on any Mac running macOS 13, 14 or 15 with SIP on. On one of them, also do the manual "Open Anyway" check:
+To fill these gaps, the owner can run `scripts/spike/sparkle-28/run.sh all` on any Mac running macOS 13, 14 or 15 with SIP on, and expect `== Done: 0 failure(s)`. On one of them, also do the manual "Open Anyway" check:
 
 1. Run `SPIKE_KEEP=1 scripts/spike/sparkle-28/run.sh update` once, to get a work folder with the test key and the server.
 2. Stop it, then serve the work folder's `www` again with `python3 -m http.server 8765 --bind 127.0.0.1`.
 3. Copy `v1.zip` to `~/Downloads` through a browser, or tag it with `xattr -w com.apple.quarantine "0083;$(printf %x $(date +%s));Safari;"`, and unzip it in Finder into `/Applications`.
 4. Open v0.0.1 and approve it with Open Anyway.
 5. Confirm it updates to v0.0.2 and relaunches with no further Gatekeeper prompt.
-6. Clean up: delete `/Applications/SparkleSpike.app`, stop the server, delete the work folder, and run `defaults delete com.local.SparkleSpike28`.
+6. Clean up: delete `/Applications/SparkleSpike.app`, stop the server, and delete the work folder. Then run `defaults delete com.local.SparkleSpike28` and delete `~/Library/Preferences/com.local.SparkleSpike28.plist` and `~/Library/Caches/com.local.SparkleSpike28`.
 
 ## Consequences
 
