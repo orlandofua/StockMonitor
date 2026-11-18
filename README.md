@@ -13,6 +13,37 @@ Each symbol gets its own menu bar item, with a green or red badge for the daily 
 
 After the Mac wakes from sleep, or when the network connection comes back, every symbol is polled again within a few seconds, so prices that do not stream do not sit at their old value until the next scheduled poll.
 
+## Install
+
+Requirements: macOS 13 (Ventura) or later on a Mac with Apple silicon (M1 or newer). Release builds are arm64 only and do not run on Intel Macs; on an Intel Mac, [build from source](#build-and-run) instead.
+
+1. Open the [latest release](https://github.com/orlandofua/StockMonitor/releases/latest) and download `StockMonitor-vX.Y.Z.zip` from its Assets list.
+2. Optional: check the download against the `.sha256` file from the same release. Run this in the folder that holds both files. It prints `OK` when the zip is intact:
+
+   ```sh
+   shasum -a 256 -c StockMonitor-vX.Y.Z.zip.sha256
+   ```
+
+3. Double-click the zip to unzip it, then drag `StockMonitor.app` into `/Applications`. Safari may unzip the file for you, in which case `StockMonitor.app` is already in Downloads.
+4. Open the app once past Gatekeeper, using one of the options below.
+
+The app is ad-hoc signed and not notarized by Apple, so the first launch is blocked with a message such as "Apple could not verify “StockMonitor” is free of malware" (macOS 15) or "“StockMonitor” can’t be opened because Apple cannot check it for malicious software" (macOS 13 and 14). This happens only once per downloaded copy. Pick one way to allow it:
+
+- **System Settings (any macOS 13+):** double-click `StockMonitor.app` and close the warning with **Done** or **OK**. Open **System Settings > Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the message about StockMonitor. Confirm with **Open Anyway** (or **Open**) and your password or Touch ID. The button appears for about an hour after the blocked launch.
+- **Right-click (macOS 13 and 14 only):** Control-click or right-click `StockMonitor.app` in Finder, choose **Open**, then click **Open** in the dialog. macOS 15 removed this shortcut, so use one of the other options there.
+- **Terminal (any macOS 13+):** remove the quarantine attribute that the browser added, then open the app:
+
+  ```sh
+  xattr -dr com.apple.quarantine /Applications/StockMonitor.app
+  open /Applications/StockMonitor.app
+  ```
+
+StockMonitor is a menu bar app with no Dock icon or window. After it opens, look for the ticker (`BZ=F` by default) at the right side of the menu bar.
+
+To update, quit StockMonitor from any of its menus, replace `StockMonitor.app` in `/Applications` with the new version, and allow it past Gatekeeper again the same way. Your symbols and settings are kept.
+
+Developer ID signing and notarization, which would remove the Gatekeeper step, are planned in [#12](https://github.com/orlandofua/StockMonitor/issues/12) and not done yet. See [ADR 0010](docs/adr/0010-distribute-unnotarized-builds-on-github-releases.md).
+
 ## Build and run
 
 Requires macOS 13+ and Swift 5.10+ (the Command Line Tools are enough; Xcode is not required).
@@ -26,19 +57,9 @@ Run the unit tests with `./test.sh`.
 
 Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
-## Download
-
-Every merged pull request publishes a [GitHub Release](https://github.com/orlandofua/StockMonitor/releases) with a zipped `StockMonitor.app` and its SHA-256 checksum. The app is not notarized, so remove the quarantine attribute before the first launch:
-
-```sh
-unzip StockMonitor-vX.Y.Z.zip
-xattr -dr com.apple.quarantine StockMonitor.app
-open StockMonitor.app
-```
-
 ## Releases
 
-Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/release.yml` when a pull request is merged into `main`. The pull request's label picks the bump:
+Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/release.yml` when a pull request is merged into `main`. Each release has two assets: `StockMonitor-vX.Y.Z.zip`, the zipped `StockMonitor.app`, and `StockMonitor-vX.Y.Z.zip.sha256`, its SHA-256 checksum. The pull request's label picks the bump:
 
 | Label | Effect |
 | --- | --- |
@@ -47,7 +68,7 @@ Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/re
 | `release:major` | `v1.2.3` to `v2.0.0` |
 | `skip-release` | no release |
 
-Local builds default to version `1.0`. Set `VERSION=1.2.3 ./build.sh` to stamp a specific version.
+See [CONTRIBUTING.md](CONTRIBUTING.md#release-labels) for which label to pick. Local builds default to version `1.0`. Set `VERSION=1.2.3 ./build.sh` to stamp a specific version.
 
 ## Usage
 
