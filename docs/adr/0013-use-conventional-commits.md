@@ -18,7 +18,7 @@ The repo allows squash merges, and GitHub then uses the pull request title as th
 
 - New commits and pull request titles follow [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<optional scope>)!: <subject>`.
   - Allowed types: `feat`, `fix`, `docs`, `test`, `refactor`, `perf`, `build`, `ci`, `chore`, `style`, `revert`, in lower case.
-  - The scope is optional, a non-empty word without spaces, such as `(stream)`.
+  - The scope is optional, a non-empty word without spaces or colons, such as `(stream)`.
   - `!` before the colon, or a `BREAKING CHANGE:` footer, marks a breaking change. The footer is not validated.
   - Exactly one space follows the colon. The subject is required and does not end with a period. The header is at most 72 characters.
   - Messages that git or GitHub generate are allowed as they are: `Merge ...`, `Revert "..."`, `fixup! `, `squash! `, and `amend! `.

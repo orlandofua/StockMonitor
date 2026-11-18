@@ -62,20 +62,21 @@ prefix_re="^([a-zA-Z]+)(\([^()]*\))?(!)?:"
 if [[ ! "$header" =~ $prefix_re ]]; then
     fail "the header does not start with a type such as 'feat:' or 'fix(scope):'"
 fi
+prefix="${BASH_REMATCH[0]}"
 type="${BASH_REMATCH[1]}"
 scope="${BASH_REMATCH[2]}"
 if [[ ! "$type" =~ ^($TYPES)$ ]]; then
     fail "unknown type '$type'"
 fi
-if [[ "$scope" == "()" || "$scope" =~ [[:space:]] ]]; then
-    fail "the scope must be a non-empty word without spaces, such as '(stream)'"
+if [[ "$scope" == "()" || "$scope" =~ [[:space:]:] ]]; then
+    fail "the scope must be a non-empty word without spaces or colons, such as '(stream)'"
 fi
 
-subject="${header#*:}"
+subject="${header:${#prefix}}"
 if [[ -z "${subject//[[:space:]]/}" ]]; then
     fail "the subject after the colon is empty"
 fi
-if [[ "$subject" != " "* || "$subject" == "  "* ]]; then
+if [[ "$subject" != " "[![:space:]]* ]]; then
     fail "put exactly one space between the colon and the subject"
 fi
 if [[ "$subject" == *. ]]; then
