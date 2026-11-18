@@ -128,6 +128,27 @@ struct LaunchAtLoginTests {
         #expect(toggle.menuState == .off)
     }
 
+    @Test(arguments: [SMAppService.Status.notRegistered, SMAppService.Status.notFound])
+    func registerThatChangesNothingIsReported(statusAfter: SMAppService.Status) {
+        // register() returns without an error, but the app is still not a login item.
+        let service = FakeLoginItemService(status: .notRegistered)
+        service.statusAfterRegister = statusAfter
+        var opened = 0
+        let toggle = LaunchAtLogin(service: service, openSystemSettings: { opened += 1 })
+
+        let failure = #expect(throws: LaunchAtLogin.Failure.self) { try toggle.toggle() }
+        #expect(failure?.action == .register)
+        #expect(failure?.message == "StockMonitor could not be added to Login Items.")
+        #expect(failure?.underlying is LaunchAtLogin.NotRegistered)
+        #expect(toggle.menuState == .off)
+        #expect(opened == 0)
+    }
+
+    @Test func notFoundAfterRegisterSuggestsApplicationsFolder() {
+        let error = LaunchAtLogin.NotRegistered(status: .notFound)
+        #expect(error.localizedDescription.contains("/Applications"))
+    }
+
     @Test func unregisterErrorIsReportedNotSwallowed() {
         let service = FakeLoginItemService(status: .enabled)
         service.error = FakeError()

@@ -42,6 +42,19 @@ final class LaunchAtLogin {
         }
     }
 
+    /// `register()` returned without an error, but the system still does not
+    /// list the app as a login item. This can happen with ad hoc signed builds
+    /// or a copy run from outside /Applications.
+    struct NotRegistered: LocalizedError {
+        let status: SMAppService.Status
+
+        var errorDescription: String? {
+            status == .notFound
+                ? "macOS could not find StockMonitor as a login item. Move the app to /Applications and try again."
+                : "macOS did not add StockMonitor to Login Items."
+        }
+    }
+
     static let title = "Launch at Login"
 
     private let service: LoginItemService
@@ -80,7 +93,8 @@ final class LaunchAtLogin {
     var menuState: NSControl.StateValue { Self.menuState(for: service.status) }
     var toolTip: String? { Self.toolTip(for: service.status) }
 
-    /// Flips the setting. Throws a `Failure` when the system refuses.
+    /// Flips the setting. Throws a `Failure` when the system refuses, including
+    /// when `register()` succeeds but the app is still not a login item.
     ///
     /// If registering leaves the item waiting for approval, System Settings is
     /// opened so the user can allow it right away.
@@ -91,7 +105,11 @@ final class LaunchAtLogin {
             switch action {
             case .register:
                 try service.register()
-                if service.status == .requiresApproval { openSystemSettings() }
+                switch service.status {
+                case .enabled: break
+                case .requiresApproval: openSystemSettings()
+                case let status: throw NotRegistered(status: status)
+                }
             case .unregister:
                 try service.unregister()
             case .openSystemSettings:
