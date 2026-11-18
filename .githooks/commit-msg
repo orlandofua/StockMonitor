@@ -1,0 +1,5 @@
+#!/bin/bash
+# Rejects commit messages that do not follow Conventional Commits.
+# Enable once per clone with: scripts/install-hooks.sh
+# CI runs the same check on every pull request, so this hook is only a shortcut.
+exec "$(dirname "$0")/../scripts/check-commit-msg.sh" "$1"
