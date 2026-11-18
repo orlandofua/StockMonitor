@@ -238,7 +238,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func addSymbol() {
         // The dialog checks the symbol with Yahoo and only returns one that has a quote.
-        guard let added = AddSymbolDialog(existing: symbols).run() else { return }
+        guard let added = AddSymbolDialog.run(existing: symbols) else { return }
         let sym = added.symbol
         symbols.append(sym)
         // Use the quote from the check so the new item shows its price immediately.

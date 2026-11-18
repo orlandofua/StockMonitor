@@ -12,12 +12,20 @@ final class AddSymbolDialog: NSObject {
     private var check: Task<Void, Never>?
     private var result: (symbol: String, quote: Quote)?
 
-    init(existing: [String]) {
+    /// Shows the dialog modally. Returns the checked symbol and its quote, or nil on Cancel.
+    ///
+    /// The Add button's target and the check task only hold the dialog weakly, so it
+    /// is kept alive here for the whole modal session.
+    static func run(existing: [String]) -> (symbol: String, quote: Quote)? {
+        let dialog = AddSymbolDialog(existing: existing)
+        return withExtendedLifetime(dialog) { dialog.run() }
+    }
+
+    private init(existing: [String]) {
         self.existing = existing
     }
 
-    /// Shows the dialog modally. Returns the checked symbol and its quote, or nil on Cancel.
-    func run() -> (symbol: String, quote: Quote)? {
+    private func run() -> (symbol: String, quote: Quote)? {
         alert.messageText = "Add Symbol"
         alert.informativeText = Self.prompt
         field.placeholderString = "Symbol"
