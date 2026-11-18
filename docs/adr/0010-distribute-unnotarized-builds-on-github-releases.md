@@ -4,7 +4,7 @@ Date: 2026-11-18
 
 ## Status
 
-Accepted
+Accepted. Partly superseded by [0015](0015-in-app-updates-with-sparkle.md), which adds in-app updates with Sparkle and serves releases from the now-public repository.
 
 ## Context
 
