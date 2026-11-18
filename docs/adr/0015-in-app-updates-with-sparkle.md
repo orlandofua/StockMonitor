@@ -4,9 +4,9 @@ Date: 2026-11-18
 
 ## Status
 
-Proposed. Partly supersedes [0010](0010-distribute-unnotarized-builds-on-github-releases.md) (the "no auto-updater" decision and the private-repository consequence). Builds on [0009](0009-release-on-merge-with-label-driven-semver.md).
+Accepted. Partly supersedes [0010](0010-distribute-unnotarized-builds-on-github-releases.md) (the "no auto-updater" decision and the private-repository consequence). Builds on [0009](0009-release-on-merge-with-label-driven-semver.md).
 
-The choices marked **Default** below are recommendations awaiting the owner's confirmation. This record moves to Accepted once they are confirmed or changed in review.
+The owner confirmed every choice marked **Default** below in review of PR #34 on 2026-11-18.
 
 ## Context
 
