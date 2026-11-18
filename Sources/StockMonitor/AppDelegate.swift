@@ -189,7 +189,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// day. At most one request per symbol and period is in flight.
     private func loadBaselineIfNeeded(_ sym: String) {
         let period = periods.period(for: sym)
-        guard let range = period.historyRange, baselines.beginFetch(sym, period: period, now: Date()) else { return }
+        // beginFetch runs first, so a switch to 1D drops a request still in flight.
+        guard baselines.beginFetch(sym, period: period, now: Date()), let range = period.historyRange else { return }
         Task { @MainActor in
             do {
                 let history = try await QuoteService.fetchHistory(sym, range: range)

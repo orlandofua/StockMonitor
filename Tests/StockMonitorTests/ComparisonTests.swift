@@ -288,6 +288,19 @@ struct BaselineCacheTests {
         #expect(cache.state(for: "AAPL", period: .week) == .loading)  // a cached 1M is not a 1W baseline
     }
 
+    @Test func switchingToOneDayDropsTheInFlightResponse() throws {
+        var cache = BaselineCache()
+        let started = cache.beginFetch("AAPL", period: .week, now: Self.now)
+        #expect(started)
+        let dayFetch = cache.beginFetch("AAPL", period: .day, now: Self.now)
+        #expect(!dayFetch)
+        let stored = cache.finish("AAPL", period: .week, history: try Self.history(), now: Self.now)
+        #expect(!stored)
+        #expect(cache.state(for: "AAPL", period: .week) == .loading)
+        let refetch = cache.beginFetch("AAPL", period: .week, now: Self.now)
+        #expect(refetch)  // switching back to 1W sends a new request
+    }
+
     @Test func symbolsAreIndependent() throws {
         var cache = BaselineCache()
         _ = cache.beginFetch("AAPL", period: .month, now: Self.now)

@@ -135,9 +135,14 @@ struct BaselineCache {
 
     /// Whether `symbol` needs a history request for `period` at `now`. When it
     /// does, the request is marked as in flight, so a second call returns false
-    /// until it finishes or fails.
+    /// until it finishes or fails. 1D never fetches, and switching to it drops
+    /// any request still in flight, so its late reply is not stored.
     mutating func beginFetch(_ symbol: String, period: ComparePeriod, now: Date) -> Bool {
-        guard period != .day, pending[symbol] != period else { return false }
+        guard period != .day else {
+            pending[symbol] = nil
+            return false
+        }
+        guard pending[symbol] != period else { return false }
         if let entry = entries[symbol], entry.baseline.period == period,
            entry.baseline.calendar.isDate(entry.fetchedAt, inSameDayAs: now) {
             return false
