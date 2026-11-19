@@ -5,6 +5,7 @@
 # BUILD_NUMBER           goes into CFBundleVersion (default 1)
 # SPARKLE_FEED_URL       goes into SUFeedURL. Unset or empty: no Sparkle keys at
 #                        all, so the build never checks for updates (ADR 0015).
+#                        Set: the update schedule keys from ADR 0015 are added too.
 # SPARKLE_PUBLIC_ED_KEY  goes into SUPublicEDKey. Required when SPARKLE_FEED_URL
 #                        is set, because Sparkle 2 rejects updates without it.
 #
@@ -43,9 +44,16 @@ if [[ -n "$SPARKLE_FEED_URL" ]]; then
     if [[ ! "$SPARKLE_PUBLIC_ED_KEY" =~ ^[A-Za-z0-9+/]{43}=$ ]]; then
         fail "SPARKLE_PUBLIC_ED_KEY must be a base64 ed25519 public key (44 characters)"
     fi
+    # Update behavior from ADR 0015: check in the background once a day without
+    # asking first, offer "Install Updates Automatically" but leave it off, so
+    # by default every update is shown in a prompt before it is installed.
     sparkle_keys="
     <key>SUFeedURL</key><string>$SPARKLE_FEED_URL</string>
-    <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_ED_KEY</string>"
+    <key>SUPublicEDKey</key><string>$SPARKLE_PUBLIC_ED_KEY</string>
+    <key>SUEnableAutomaticChecks</key><true/>
+    <key>SUScheduledCheckInterval</key><integer>86400</integer>
+    <key>SUAllowsAutomaticUpdates</key><true/>
+    <key>SUAutomaticallyUpdate</key><false/>"
 fi
 
 cat <<PLIST

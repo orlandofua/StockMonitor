@@ -52,6 +52,10 @@ if generate; then
     expect_value LSUIElement true "$context"
     expect_missing SUFeedURL "$context"
     expect_missing SUPublicEDKey "$context"
+    expect_missing SUEnableAutomaticChecks "$context"
+    expect_missing SUScheduledCheckInterval "$context"
+    expect_missing SUAllowsAutomaticUpdates "$context"
+    expect_missing SUAutomaticallyUpdate "$context"
 else
     fail "$context: exited non-zero"
 fi
@@ -72,6 +76,7 @@ if generate SPARKLE_FEED_URL= SPARKLE_PUBLIC_ED_KEY="$KEY"; then
     expect_valid "$context"
     expect_missing SUFeedURL "$context"
     expect_missing SUPublicEDKey "$context"
+    expect_missing SUScheduledCheckInterval "$context"
 else
     fail "$context: exited non-zero"
 fi
@@ -83,6 +88,11 @@ if generate SPARKLE_FEED_URL="$FEED" SPARKLE_PUBLIC_ED_KEY="$KEY"; then
     expect_value SUFeedURL "$FEED" "$context"
     expect_value SUPublicEDKey "$KEY" "$context"
     expect_value CFBundleVersion 1 "$context"
+    # ADR 0015: check once a day in the background, prompt before installing by default.
+    expect_value SUEnableAutomaticChecks true "$context"
+    expect_value SUScheduledCheckInterval 86400 "$context"
+    expect_value SUAllowsAutomaticUpdates true "$context"
+    expect_value SUAutomaticallyUpdate false "$context"
 else
     fail "$context: exited non-zero"
 fi
