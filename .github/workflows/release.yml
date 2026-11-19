@@ -3,6 +3,11 @@ name: Release
 # Every merged pull request into main produces a versioned GitHub Release with
 # a zipped StockMonitor.app. The PR's labels pick the version bump; see
 # docs/adr/0009-release-on-merge-with-label-driven-semver.md.
+#
+# The same run signs the zip with the EdDSA key and adds it to the Sparkle
+# update feed on the gh-pages branch (docs/adr/0015-in-app-updates-with-sparkle.md).
+# It needs the SPARKLE_ED_PRIVATE_KEY secret and the SPARKLE_PUBLIC_ED_KEY
+# variable; see "Update feed" in README.md.
 on:
   pull_request:
     types: [closed]
@@ -29,12 +34,30 @@ jobs:
     env:
       MERGE_SHA: ${{ github.event.pull_request.merge_commit_sha }}
       PR_LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+      # ADR 0015. build.sh writes both into Info.plist.
+      SPARKLE_FEED_URL: https://orlandofua.github.io/StockMonitor/appcast.xml
+      SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+      SPARKLE_BIN: .build/artifacts/sparkle/Sparkle/bin
+    defaults:
+      run:
+        # Adds pipefail, so a failing sign_update in a pipe fails the step.
+        shell: bash
     steps:
       - name: Check out the merge commit with tags
         uses: actions/checkout@v7
         with:
           ref: ${{ github.event.pull_request.merge_commit_sha }}
           fetch-depth: 0
+
+      # build.sh leaves the Sparkle keys out when the feed URL is empty, and the
+      # release would then never check for updates. Fail before doing any work.
+      - name: Check the update signing setup
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+        run: |
+          : "${SPARKLE_FEED_URL:?must be set for a release}"
+          : "${SPARKLE_PUBLIC_ED_KEY:?must be set for a release (repository variable SPARKLE_PUBLIC_ED_KEY)}"
+          : "${SPARKLE_ED_PRIVATE_KEY:?must be set for a release (repository secret SPARKLE_ED_PRIVATE_KEY)}"
 
       - name: Show toolchain
         run: |
@@ -68,7 +91,15 @@ jobs:
         env:
           VERSION: ${{ steps.version.outputs.version }}
           BUILD_NUMBER: ${{ github.run_number }}
-        run: ./build.sh
+        run: |
+          ./build.sh
+          plist=build/StockMonitor.app/Contents/Info.plist
+          feed="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$plist")"
+          key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$plist")"
+          if [[ "$feed" != "$SPARKLE_FEED_URL" || "$key" != "$SPARKLE_PUBLIC_ED_KEY" ]]; then
+            echo "::error::The built Info.plist has the wrong SUFeedURL or SUPublicEDKey"
+            exit 1
+          fi
 
       - name: Package
         if: steps.version.outputs.tag != ''
@@ -80,7 +111,66 @@ jobs:
           shasum -a 256 "$zip" > "$zip.sha256"
           cat "$zip.sha256"
 
-      - name: Publish the release
+      # Sign with the private key, then check the signature against the
+      # SUPublicEDKey inside the built app, which is what installed copies use.
+      # A mismatched secret and variable fail here instead of shipping an update
+      # that every client rejects.
+      - name: Sign the update
+        id: sign
+        if: steps.version.outputs.tag != ''
+        env:
+          SPARKLE_ED_PRIVATE_KEY: ${{ secrets.SPARKLE_ED_PRIVATE_KEY }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          zip="StockMonitor-$TAG.zip"
+          signature="$(printf '%s' "$SPARKLE_ED_PRIVATE_KEY" | "$SPARKLE_BIN/sign_update" --ed-key-file - -p "$zip")"
+          key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' build/StockMonitor.app/Contents/Info.plist)"
+          swift scripts/verify-ed-signature.swift "$key" "$signature" "$zip"
+          echo "signature=$signature" >> "$GITHUB_OUTPUT"
+          echo "length=$(stat -f %z "$zip")" >> "$GITHUB_OUTPUT"
+
+      # The feed lives on the gh-pages branch, served by GitHub Pages. The first
+      # release creates the branch. The commit is pushed only after the draft
+      # release below exists.
+      - name: Add the release to the update feed
+        if: steps.version.outputs.tag != ''
+        env:
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+          LENGTH: ${{ steps.sign.outputs.length }}
+          ED_SIGNATURE: ${{ steps.sign.outputs.signature }}
+        run: |
+          pages="$RUNNER_TEMP/gh-pages"
+          if git ls-remote --exit-code --heads origin gh-pages >/dev/null; then
+            git fetch --no-tags origin gh-pages
+            git worktree add "$pages" FETCH_HEAD
+          else
+            echo "No gh-pages branch yet; creating it"
+            git worktree add --detach "$pages"
+            git -C "$pages" checkout --orphan gh-pages
+            git -C "$pages" rm -rf --quiet .
+            touch "$pages/.nojekyll"
+          fi
+          base="https://github.com/$GITHUB_REPOSITORY/releases"
+          ZIP_URL="$base/download/$TAG/StockMonitor-$TAG.zip" \
+          NOTES_URL="$base/tag/$TAG" \
+            ./scripts/add-appcast-item.sh "$pages/appcast.xml"
+          # Check the published entry itself, not just the value passed in.
+          key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' build/StockMonitor.app/Contents/Info.plist)"
+          feed_signature="$(xmllint --xpath "string(//item[1]/enclosure/@*[local-name()='edSignature'])" "$pages/appcast.xml")"
+          swift scripts/verify-ed-signature.swift "$key" "$feed_signature" "StockMonitor-$TAG.zip"
+          cd "$pages"
+          git add -A
+          git -c user.name="github-actions[bot]" \
+              -c user.email="41898299+github-actions[bot]@users.noreply.github.com" \
+              commit -m "chore(appcast): add $TAG (build $BUILD_NUMBER)"
+          cat appcast.xml
+
+      # Publish in three steps so a release never goes out without its feed
+      # entry: upload as a draft, push the feed, then publish the draft. If the
+      # feed push fails, the release stays a draft and the run fails.
+      - name: Upload the release as a draft
         if: steps.version.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
@@ -88,7 +178,21 @@ jobs:
         run: |
           gh release create "$TAG" \
             --repo "$GITHUB_REPOSITORY" \
+            --draft \
             --target "$MERGE_SHA" \
             --title "$TAG" \
             --generate-notes \
             "StockMonitor-$TAG.zip" "StockMonitor-$TAG.zip.sha256"
+
+      - name: Publish the update feed
+        if: steps.version.outputs.tag != ''
+        # Push from the main checkout, where actions/checkout set up the token.
+        # No force: if gh-pages changed during the run, the push fails.
+        run: git push origin "$(git -C "$RUNNER_TEMP/gh-pages" rev-parse HEAD):refs/heads/gh-pages"
+
+      - name: Publish the release
+        if: steps.version.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+        run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false

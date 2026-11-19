@@ -91,6 +91,26 @@ Versions are semver tags (`vMAJOR.MINOR.PATCH`) created by `.github/workflows/re
 
 See [CONTRIBUTING.md](CONTRIBUTING.md#release-labels) for which label to pick. Local builds default to version `1.0`. Set `VERSION=1.2.3 ./build.sh` to stamp a specific version.
 
+### Update feed
+
+The same release run publishes the update feed for in-app updates ([ADR 0015](docs/adr/0015-in-app-updates-with-sparkle.md)). It builds the app with `SUFeedURL` set to `https://orlandofua.github.io/StockMonitor/appcast.xml`, signs the zip with Sparkle's `sign_update` and the EdDSA private key, checks the signature against the `SUPublicEDKey` in the built app, and adds an item to `appcast.xml` on the `gh-pages` branch, which GitHub Pages serves. The item has the version, the build number (`sparkle:version`), the zip's size and signature, a minimum macOS of 13.0.0, and a link to the GitHub release page. The zip itself stays a release asset.
+
+The release is uploaded as a draft first, then the feed commit is pushed, then the release is published. If any step fails, the run fails, and nothing is published or the release is left as a draft. To retry, delete the draft release (if there is one) and re-run the workflow. A `skip-release` merge makes no release and does not touch the feed. The first release creates the `gh-pages` branch.
+
+The workflow needs this setup in the repository settings. Without it, every release run fails in its first step.
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `SPARKLE_ED_PRIVATE_KEY` | Actions secret | The EdDSA private key (base64), as exported by `generate_keys -x` |
+| `SPARKLE_PUBLIC_ED_KEY` | Actions variable | The matching public key (base64, 44 characters), printed by `generate_keys -p` |
+
+One-time setup by the repository owner, on their own Mac:
+
+1. Run `./build.sh` once so SwiftPM downloads Sparkle, then `.build/artifacts/sparkle/Sparkle/bin/generate_keys`. It creates the key pair in the login keychain and prints the public key.
+2. Export the private key with `.build/artifacts/sparkle/Sparkle/bin/generate_keys -x private-key.txt`, store it as the secret with `gh secret set SPARKLE_ED_PRIVATE_KEY < private-key.txt`, back it up offline as ADR 0015 describes, and then delete `private-key.txt`. Never commit it.
+3. Store the public key with `gh variable set SPARKLE_PUBLIC_ED_KEY --body '<public key>'`.
+4. After the first release has created the `gh-pages` branch, turn on GitHub Pages under Settings > Pages: Deploy from a branch, `gh-pages`, `/ (root)`. Check that the feed loads with `curl -fsS https://orlandofua.github.io/StockMonitor/appcast.xml`.
+
 ## Usage
 
 Click any ticker in the menu bar to:
@@ -122,7 +142,7 @@ Move `StockMonitor.app` to `/Applications` before turning this on, because the l
 
 ### Updates
 
-Update checks exist only in builds made with both `SPARKLE_FEED_URL` and `SPARKLE_PUBLIC_ED_KEY` set (see [Build and run](#build-and-run)). Builds without them, including the current releases and a plain `./build.sh`, show no update items and never check for updates. In a build with a feed, StockMonitor checks for a new version in the background once a day. **Check for Updates…** checks right away and either says you are up to date or shows the new version with its release notes, where you choose Install, Skip This Version, or Remind Me Later. **Install Updates Automatically** is off by default; turn it on to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, without a prompt. The setting is kept across launches.
+Update checks exist only in builds made with both `SPARKLE_FEED_URL` and `SPARKLE_PUBLIC_ED_KEY` set (see [Build and run](#build-and-run)). Releases made by the release workflow set both. Releases up to v1.3.0 and a plain `./build.sh` do not, so they show no update items and never check for updates. In a build with a feed, StockMonitor checks for a new version in the background once a day. **Check for Updates…** checks right away and either says you are up to date or shows the new version with its release notes, where you choose Install, Skip This Version, or Remind Me Later. **Install Updates Automatically** is off by default; turn it on to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, without a prompt. The setting is kept across launches.
 
 ## Architecture
 
