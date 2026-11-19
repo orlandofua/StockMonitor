@@ -104,7 +104,7 @@ Click any ticker in the menu bar to:
 - See whether the symbol is streaming live or being polled
 - Set the polling interval (15s, 30s, 1m, or 5m)
 - Turn **Launch at Login** on or off
-- **Check for Updates…** and turn **Install Updates Automatically** on or off (release builds only, see below)
+- **Check for Updates…** and turn **Install Updates Automatically** on or off (only in builds with an update feed, see below)
 
 Symbols and settings persist between launches.
 
@@ -122,7 +122,7 @@ Move `StockMonitor.app` to `/Applications` before turning this on, because the l
 
 ### Updates
 
-Release builds check for a new version in the background once a day. **Check for Updates…** checks right away and either says you are up to date or shows the new version with its release notes, where you choose Install, Skip This Version, or Remind Me Later. **Install Updates Automatically** is off by default; turn it on to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, without a prompt. The setting is kept across launches. Builds made without an update feed, such as a plain `./build.sh`, never check for updates and do not show these menu items.
+Update checks exist only in builds made with both `SPARKLE_FEED_URL` and `SPARKLE_PUBLIC_ED_KEY` set (see [Build and run](#build-and-run)). Builds without them, including the current releases and a plain `./build.sh`, show no update items and never check for updates. In a build with a feed, StockMonitor checks for a new version in the background once a day. **Check for Updates…** checks right away and either says you are up to date or shows the new version with its release notes, where you choose Install, Skip This Version, or Remind Me Later. **Install Updates Automatically** is off by default; turn it on to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, without a prompt. The setting is kept across launches.
 
 ## Architecture
 
