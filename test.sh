@@ -6,6 +6,7 @@ cd "$(dirname "$0")"
 
 ./scripts/next-version-tests.sh
 ./scripts/check-commit-msg-tests.sh
+./scripts/make-info-plist-tests.sh
 
 PLUGINS=/Library/Developer/CommandLineTools/usr/lib/swift/host/plugins/testing
 if [[ -d "$PLUGINS" ]] && ! xcode-select -p | grep -q Xcode.app; then

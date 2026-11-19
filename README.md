@@ -65,6 +65,15 @@ open build/StockMonitor.app
 
 Run the unit tests with `./test.sh`.
 
+The app bundle embeds [Sparkle](https://sparkle-project.org) in `Contents/Frameworks` for in-app updates (see [ADR 0015](docs/adr/0015-in-app-updates-with-sparkle.md)). SwiftPM downloads it on the first build. A local build has no update feed and never checks for updates. To build one that does, set both the feed URL and the EdDSA public key:
+
+```sh
+SPARKLE_FEED_URL=https://orlandofua.github.io/StockMonitor/appcast.xml \
+SPARKLE_PUBLIC_ED_KEY=<base64 public key> ./build.sh
+```
+
+`./build.sh` fails if the feed URL is set without a valid key, and it fails if the signed bundle does not pass `codesign --verify --deep --strict`.
+
 Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
 Commit messages and pull request titles follow [Conventional Commits](CONTRIBUTING.md#commit-messages), checked on every pull request by `.github/workflows/commit-lint.yml`. Run `scripts/install-hooks.sh` once to check them locally as you commit.
