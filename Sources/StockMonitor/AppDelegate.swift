@@ -45,6 +45,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
     private var wakeObserver: NSObjectProtocol?
     private let launchAtLogin = LaunchAtLogin()
+    /// In-app updates (issue #30, ADR 0015). Off, with no menu items, when the
+    /// build has no update feed.
+    private var updates: Updates?
     private let pathMonitor = NWPathMonitor()
     private var lastPathStatus: NWPath.Status?
 
@@ -71,6 +74,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh(force: true)
         scheduleTimer()
         observeWakeAndNetwork()
+        updates = Updates(info: Bundle.main.infoDictionary)
     }
 
     func applicationWillTerminate(_ notification: Notification) {
@@ -313,6 +317,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         login.state = launchAtLogin.menuState
         login.toolTip = launchAtLogin.toolTip
         menu.addItem(login)
+        updates?.menuItems().forEach(menu.addItem)
 
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "Quit", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
