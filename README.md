@@ -19,8 +19,6 @@ If a symbol stops updating (no live stream and no successful poll for twice the 
 
 Requirements: macOS 13 (Ventura) or later on a Mac with Apple silicon (M1 or newer). Release builds are arm64 only and do not run on Intel Macs; on an Intel Mac, [build from source](#build-and-run) instead.
 
-The repository is private, so the release links below open only for GitHub accounts with access to it. Sign in to GitHub first; anyone else sees a 404 page.
-
 1. Open the [latest release](https://github.com/orlandofua/StockMonitor/releases/latest) and download `StockMonitor-vX.Y.Z.zip` from its Assets list.
 2. Optional: check the download against the `.sha256` file from the same release. Run this in the folder that holds both files. It prints `OK` when the zip is intact:
 
@@ -50,7 +48,7 @@ The app is ad-hoc signed and not notarized by Apple, so the first launch is bloc
 
 StockMonitor is a menu bar app with no Dock icon or window. After it opens, look for the ticker (`BZ=F` by default) at the right side of the menu bar.
 
-To update, quit StockMonitor from any of its menus, replace `StockMonitor.app` in `/Applications` with the new version, and allow it past Gatekeeper again the same way. Your symbols and settings are kept.
+Releases after v1.3.0 update themselves from inside the app, without another Gatekeeper step (see [Updates](#updates)). Releases up to v1.3.0 have no updater, so move from those to a newer release [by hand](#update-by-hand) once.
 
 Developer ID signing and notarization, which would remove the Gatekeeper step, are planned in [#12](https://github.com/orlandofua/StockMonitor/issues/12) and not done yet. See [ADR 0010](docs/adr/0010-distribute-unnotarized-builds-on-github-releases.md).
 
@@ -107,9 +105,11 @@ The workflow needs this setup in the repository settings. Without it, every rele
 One-time setup by the repository owner, on their own Mac:
 
 1. Run `./build.sh` once so SwiftPM downloads Sparkle, then `.build/artifacts/sparkle/Sparkle/bin/generate_keys`. It creates the key pair in the login keychain and prints the public key.
-2. Export the private key with `.build/artifacts/sparkle/Sparkle/bin/generate_keys -x private-key.txt`, store it as the secret with `gh secret set SPARKLE_ED_PRIVATE_KEY < private-key.txt`, back it up offline as ADR 0015 describes, and then delete `private-key.txt`. Never commit it.
+2. Export the private key with `.build/artifacts/sparkle/Sparkle/bin/generate_keys -x private-key.txt`, store it as the secret with `gh secret set SPARKLE_ED_PRIVATE_KEY < private-key.txt`, back it up offline as [CONTRIBUTING.md](CONTRIBUTING.md#back-up-the-signing-key) describes, and then delete `private-key.txt`. Never commit it.
 3. Store the public key with `gh variable set SPARKLE_PUBLIC_ED_KEY --body '<public key>'`.
 4. After the first release has created the `gh-pages` branch, turn on GitHub Pages under Settings > Pages: Deploy from a branch, `gh-pages`, `/ (root)`. Check that the feed loads with `curl -fsS https://orlandofua.github.io/StockMonitor/appcast.xml`.
+
+To pull a bad release from the feed, or to back up or replace the signing key, see [Update feed and signing key](CONTRIBUTING.md#update-feed-and-signing-key) in CONTRIBUTING.md.
 
 ## Usage
 
@@ -142,7 +142,36 @@ Move `StockMonitor.app` to `/Applications` before turning this on, because the l
 
 ### Updates
 
-Update checks exist only in builds made with both `SPARKLE_FEED_URL` and `SPARKLE_PUBLIC_ED_KEY` set (see [Build and run](#build-and-run)). Releases made by the release workflow set both. Releases up to v1.3.0 and a plain `./build.sh` do not, so they show no update items and never check for updates. In a build with a feed, StockMonitor checks for a new version in the background once a day. **Check for Updates…** checks right away and either says you are up to date or shows the new version with its release notes, where you choose Install, Skip This Version, or Remind Me Later. **Install Updates Automatically** is off by default; turn it on to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, without a prompt. The setting is kept across launches.
+StockMonitor updates itself with [Sparkle](https://sparkle-project.org) ([ADR 0015](docs/adr/0015-in-app-updates-with-sparkle.md)). Every merged release goes into the update feed as soon as it is published, so updates can arrive often.
+
+- **Daily check.** StockMonitor checks for a new version in the background once a day. The check downloads one small file from GitHub Pages and does not touch Yahoo Finance.
+- **Check for Updates…** in any ticker menu checks right away. It either says you are up to date or shows the new version with its release notes.
+- **Prompt (the default).** When an update is found, a window shows the new version and its release notes. Choose **Install Update** to download and install it now (StockMonitor relaunches), **Skip This Version** to not be offered that version again, or **Remind Me Later**.
+- **Install Updates Automatically.** Turn this on in any ticker menu to have updates downloaded in the background and installed the next time StockMonitor quits or relaunches, with no prompt. A checkmark means it is on. It is off by default, and the setting is kept across launches and updates.
+
+To turn off automatic install, open any ticker menu and choose **Install Updates Automatically** so that the checkmark goes away. Updates are then offered in the prompt again.
+
+To turn off the daily background check as well, quit StockMonitor and run the command below. **Check for Updates…** keeps working. To turn the daily check back on, run it again with `true`.
+
+```sh
+defaults write com.local.StockMonitor SUEnableAutomaticChecks -bool false
+```
+
+Updates are signed. Before installing, StockMonitor checks the download against a public key built into the app, and refuses any update that the release workflow did not sign. Updates installed this way do not need another Gatekeeper step, and your symbols and settings are kept.
+
+Updates need the app in a folder you can write to, such as `/Applications`. If you open it straight from Downloads or from the zip, macOS runs it from a read-only location and the update fails, so move it to `/Applications` first.
+
+Update checks exist only in builds made with both `SPARKLE_FEED_URL` and `SPARKLE_PUBLIC_ED_KEY` set (see [Build and run](#build-and-run)). Releases made by the release workflow set both. Releases up to v1.3.0 and a plain `./build.sh` do not, so they show no update items and never check for updates.
+
+### Update by hand
+
+Install a new release by hand when you run v1.3.0 or older, when **Check for Updates…** reports an error such as "The update is improperly signed and could not be validated", or when the release notes ask you to.
+
+1. Quit StockMonitor from any of its menus.
+2. Download the new release as in [Install](#install), steps 1 to 3, and replace `StockMonitor.app` in `/Applications` with it.
+3. Open it past Gatekeeper again, as in [Install](#install), step 4.
+
+Your symbols and settings are kept.
 
 ## Architecture
 
