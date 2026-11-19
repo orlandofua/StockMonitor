@@ -123,6 +123,46 @@ else
     fail "$context: exited non-zero"
 fi
 
+# A commented-out item (a bad release pulled by hand) must not swallow the new one.
+context="commented-out item"
+rm -f "$FEED"
+add || fail "$context: setup failed"
+perl -0pi -e 's/(\n\s*)<item>/$1<!--$1<item>/; s/<\/item>/<\/item>\n-->/' "$FEED"
+if add VERSION=2.0.0 BUILD_NUMBER=20; then
+    xmllint --noout "$FEED" 2>/dev/null || fail "$context: not well-formed XML"
+    expect_xpath "count(//channel/item)" 1 "$context"
+    expect_xpath "string(//channel/item[1]/*[local-name()='version'])" 20 "$context"
+    grep -q '<!--' "$FEED" || fail "$context: the comment was lost"
+else
+    fail "$context: exited non-zero"
+fi
+
+# The same with the comment markers on the item's own lines.
+context="commented-out item, inline markers"
+rm -f "$FEED"
+add || fail "$context: setup failed"
+perl -0pi -e 's/<item>/<!-- <item>/; s/<\/item>/<\/item> -->/' "$FEED"
+if add VERSION=2.0.0 BUILD_NUMBER=20; then
+    expect_xpath "count(//channel/item)" 1 "$context"
+    expect_xpath "string(//channel/item[1]/*[local-name()='version'])" 20 "$context"
+else
+    fail "$context: exited non-zero"
+fi
+
+# A commented-out item above a real one: the new item still goes first.
+context="commented-out item above a real one"
+rm -f "$FEED"
+add || fail "$context: setup failed"
+add VERSION=1.3.0 BUILD_NUMBER=11 || fail "$context: setup failed"
+perl -0pi -e 's/(\n\s*)<item>/$1<!--$1<item>/; s/<\/item>/<\/item>\n-->/' "$FEED"
+if add VERSION=2.0.0 BUILD_NUMBER=20; then
+    expect_xpath "count(//channel/item)" 2 "$context"
+    expect_xpath "string(//channel/item[1]/*[local-name()='version'])" 20 "$context"
+    expect_xpath "string(//channel/item[2]/*[local-name()='version'])" 10 "$context"
+else
+    fail "$context: exited non-zero"
+fi
+
 # verify-ed-signature.swift accepts a real signature and rejects every change.
 cat >"$TMP/sign.swift" <<'SWIFT'
 import CryptoKit

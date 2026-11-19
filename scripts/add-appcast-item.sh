@@ -87,18 +87,49 @@ item="        <item>
             <enclosure url=\"$ZIP_URL\" length=\"$LENGTH\" type=\"application/octet-stream\" sparkle:edSignature=\"$ED_SIGNATURE\"/>
         </item>"
 
+# count_items <file or ->: prints the number of real items, as an XML parser
+# sees them. Items inside comments do not count.
+count_items() {
+    xmllint --xpath 'count(/rss/channel/item)' "$1" 2>/dev/null
+}
+
 # Insert the item above the first existing item, or above </channel> if the
-# feed has none yet, so the newest release comes first.
+# feed has none yet, so the newest release comes first. Lines inside XML
+# comments are skipped, so an item commented out by hand (a pulled release,
+# ADR 0015) cannot swallow the new one. The checks below catch anything else.
 tmp="$(mktemp "${TMPDIR:-/tmp}/appcast.XXXXXX")"
 trap 'rm -f "$tmp"' EXIT
 ITEM="$item" awk '
-    !done && (/^[[:space:]]*<item>/ || /<\/channel>/) { print ENVIRON["ITEM"]; done = 1 }
-    { print }
+    !done && !in_comment && (/^[[:space:]]*<item>/ || /<\/channel>/) {
+        print ENVIRON["ITEM"]
+        done = 1
+    }
+    {
+        print
+        # Track whether the next line starts inside a comment.
+        rest = $0
+        while (1) {
+            if (!in_comment) {
+                i = index(rest, "<!--")
+                if (!i) break
+                in_comment = 1
+                rest = substr(rest, i + 4)
+            } else {
+                i = index(rest, "-->")
+                if (!i) break
+                in_comment = 0
+                rest = substr(rest, i + 3)
+            }
+        }
+    }
 ' <<<"$current" >"$tmp"
 
 xmllint --noout "$tmp" 2>/dev/null || fail "the updated feed is not well-formed XML"
-before="$(grep -c '<item>' <<<"$current" || true)"
-after="$(grep -c '<item>' "$tmp" || true)"
-[[ "$after" -eq $((before + 1)) ]] || fail "expected $((before + 1)) items after adding one, found $after"
+before="$(count_items - <<<"$current")"
+after="$(count_items "$tmp")"
+[[ "$after" == $((before + 1)) ]] || fail "expected $((before + 1)) items after adding one, found ${after:-none}"
+first="$(xmllint --xpath "string(/rss/channel/item[1]/*[local-name()='version'])" "$tmp" 2>/dev/null)"
+[[ "$first" == "$BUILD_NUMBER" ]] ||
+    fail "the first item has sparkle:version '$first', expected the new build $BUILD_NUMBER"
 
 cat "$tmp" >"$FEED"
