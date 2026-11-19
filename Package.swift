@@ -11,7 +11,11 @@ let package = Package(
     targets: [
         .executableTarget(name: "StockMonitor",
                           dependencies: [.product(name: "Sparkle", package: "Sparkle")],
-                          path: "Sources/StockMonitor"),
+                          path: "Sources/StockMonitor",
+                          // SwiftPM copies Sparkle.framework next to the executable in .build/<config>/
+                          // but adds no rpath for it, so `swift run` and .build/*/StockMonitor would
+                          // not start. build.sh adds @executable_path/../Frameworks for the app bundle.
+                          linkerSettings: [.unsafeFlags(["-Xlinker", "-rpath", "-Xlinker", "@loader_path"])]),
         .testTarget(name: "StockMonitorTests", dependencies: ["StockMonitor"], path: "Tests/StockMonitorTests",
                     resources: [.copy("Fixtures")]),
     ]
