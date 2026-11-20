@@ -4,7 +4,7 @@ Date: 2026-11-17
 
 ## Status
 
-Accepted. The signing consequence is superseded by [0017](0017-developer-id-signing-and-notarization.md).
+Accepted. The signing part is superseded by [0017](0017-developer-id-signing-and-notarization.md).
 
 ## Context
 

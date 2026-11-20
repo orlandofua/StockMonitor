@@ -52,8 +52,8 @@ printf '%s\n' "$INFO_PLIST" > "$APP/Contents/Info.plist"
 
 # Ad-hoc signature, no Hardened Runtime: with it, Library Validation stops an
 # ad-hoc app from loading the framework (ADR 0015). Releases re-sign the app
-# with Developer ID and the Hardened Runtime in scripts/sign-app.sh (ADR 0017). Signing the bundle seals
-# the framework inside it. A signing failure must fail the build, because a
+# with Developer ID and the Hardened Runtime in scripts/sign-app.sh (ADR 0017).
+# Signing the bundle seals the framework inside it. A signing failure must fail the build, because a
 # broken signature breaks updates.
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"

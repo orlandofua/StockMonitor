@@ -73,7 +73,7 @@ jobs:
       # keeps the ad-hoc build (ADR 0017). Some but not all is a setup mistake,
       # so fail before doing any work instead of shipping an ad-hoc build.
       - name: Check the Developer ID setup
-        id: signing
+        id: developer_id
         env:
           DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
           DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
@@ -89,10 +89,10 @@ jobs:
           done
           if ((${#set_names[@]} == ${#names[@]})); then
             echo "Developer ID signing and notarization: on"
-            echo "notarize=true" >> "$GITHUB_OUTPUT"
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
           elif ((${#set_names[@]} == 0)); then
             echo "::warning::Developer ID secrets are not set, so this release is ad-hoc signed and not notarized. Users must open it past Gatekeeper (ADR 0017)."
-            echo "notarize=false" >> "$GITHUB_OUTPUT"
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
           else
             echo "::error::Some Developer ID secrets are set but these are missing: ${missing[*]}"
             exit 1
@@ -144,23 +144,31 @@ jobs:
       # A temporary keychain that only this run uses, deleted at the end.
       - name: Import the Developer ID certificate
         id: identity
-        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        if: steps.version.outputs.tag != '' && steps.developer_id.outputs.enabled == 'true'
         env:
           DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
           DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
         run: |
           keychain="$RUNNER_TEMP/signing.keychain-db"
+          # The cleanup step at the end of the job reads this path.
+          echo "SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           keychain_password="$(openssl rand -base64 32)"
           certificate="$RUNNER_TEMP/developer-id.p12"
           trap 'rm -f "$certificate"' EXIT
-          printf '%s' "$DEVELOPER_ID_CERTIFICATE_P12" | base64 --decode > "$certificate"
+          (umask 077 && printf '%s' "$DEVELOPER_ID_CERTIFICATE_P12" | base64 --decode > "$certificate")
           security create-keychain -p "$keychain_password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
           security unlock-keychain -p "$keychain_password" "$keychain"
           security import "$certificate" -k "$keychain" -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" \
             -f pkcs12 -T /usr/bin/codesign
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Add it to the search list, keeping the keychains already there.
+          keychains=()
+          while IFS= read -r path; do
+            path="${path#"${path%%[![:space:]]*}"}"
+            keychains+=("${path//\"/}")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${keychains[@]}"
           # Sign by the certificate's SHA-1 hash, which names exactly one identity.
           identities="$(security find-identity -v -p codesigning "$keychain" | grep '"Developer ID Application: ' || true)"
           if [[ "$(grep -c . <<<"$identities")" != 1 ]]; then
@@ -168,12 +176,12 @@ jobs:
             exit 1
           fi
           echo "Signing identity: $(sed -E 's/.*"(.*)"/\1/' <<<"$identities")"
-          echo "hash=$(awk '{print $2}' <<<"$identities")" >> "$GITHUB_OUTPUT"
+          echo "sha1=$(awk '{print $2}' <<<"$identities")" >> "$GITHUB_OUTPUT"
 
       - name: Sign with Developer ID
-        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        if: steps.version.outputs.tag != '' && steps.developer_id.outputs.enabled == 'true'
         env:
-          IDENTITY: ${{ steps.identity.outputs.hash }}
+          IDENTITY: ${{ steps.identity.outputs.sha1 }}
         run: |
           ./scripts/sign-app.sh build/StockMonitor.app "$IDENTITY"
           codesign -dv build/StockMonitor.app 2>&1 | grep -E '^(Authority|TeamIdentifier|Timestamp|CodeDirectory)'
@@ -182,7 +190,7 @@ jobs:
       # ticket is then stapled to the app itself, so Gatekeeper can check it
       # offline, and the Package step zips the stapled app.
       - name: Notarize
-        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        if: steps.version.outputs.tag != '' && steps.developer_id.outputs.enabled == 'true'
         env:
           NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
           NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
@@ -194,12 +202,15 @@ jobs:
           (umask 077 && printf '%s\n' "$NOTARY_API_KEY_P8" > "$key")
           auth=(--key "$key" --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER_ID")
           ditto -c -k --sequesterRsrc --keepParent build/StockMonitor.app "$upload"
-          result="$(xcrun notarytool submit "$upload" "${auth[@]}" --wait --timeout 30m --output-format json)"
+          # notarytool exits non-zero on a timeout, an auth error or a rejection.
+          # Keep going so the status and Apple's log are printed either way.
+          rc=0
+          result="$(xcrun notarytool submit "$upload" "${auth[@]}" --wait --timeout 30m --output-format json)" || rc=$?
           echo "$result"
-          id="$(jq -r '.id // empty' <<<"$result")"
-          status="$(jq -r '.status // empty' <<<"$result")"
+          id="$(jq -r '.id // empty' <<<"$result" 2>/dev/null || true)"
+          status="$(jq -r '.status // empty' <<<"$result" 2>/dev/null || true)"
           if [[ "$status" != "Accepted" ]]; then
-            echo "::error::Notarization finished with status '${status:-unknown}'"
+            echo "::error::Notarization finished with status '${status:-unknown}' (notarytool exit code $rc)"
             [[ -n "$id" ]] && xcrun notarytool log "$id" "${auth[@]}" || true
             exit 1
           fi
@@ -209,8 +220,15 @@ jobs:
       # The acceptance check from #12: Gatekeeper must accept the app as
       # notarized Developer ID code, the same check a downloaded copy gets.
       - name: Check Gatekeeper accepts the app
-        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        if: steps.version.outputs.tag != '' && steps.developer_id.outputs.enabled == 'true'
         run: |
+          # Some runner images turn Gatekeeper assessments off, and spctl then
+          # reports "override=security disabled" instead of the source.
+          if ! spctl --status | grep -q 'assessments enabled'; then
+            echo "Gatekeeper assessments are off on this runner; turning them on"
+            sudo spctl --global-enable 2>/dev/null || sudo spctl --master-enable
+            spctl --status
+          fi
           assessment="$(spctl --assess --type execute -vv build/StockMonitor.app 2>&1)" || {
             echo "$assessment"
             echo "::error::Gatekeeper rejected the notarized app"
@@ -319,5 +337,5 @@ jobs:
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
 
       - name: Delete the signing keychain
-        if: always() && steps.identity.outcome != 'skipped'
-        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+        if: always() && env.SIGNING_KEYCHAIN != ''
+        run: security delete-keychain "$SIGNING_KEYCHAIN" 2>/dev/null || true

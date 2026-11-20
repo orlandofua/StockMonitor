@@ -53,13 +53,19 @@ make_app() {
 PLIST
     ditto "$FRAMEWORK" "$app/Contents/Frameworks/Sparkle.framework"
     fw="$app/Contents/Frameworks/Sparkle.framework"
-    codesign --force --sign - "$fw/Versions/B/XPCServices/Installer.xpc" 2>/dev/null
-    codesign --force --sign - --entitlements "$TMP/downloader.entitlements" \
-        "$fw/Versions/B/XPCServices/Downloader.xpc" 2>/dev/null
-    codesign --force --sign - "$fw/Versions/B/Autoupdate" 2>/dev/null
-    codesign --force --sign - "$fw/Versions/B/Updater.app" 2>/dev/null
-    codesign --force --sign - "$fw" 2>/dev/null
-    codesign --force --sign - "$app" 2>/dev/null
+    {
+        codesign --force --sign - "$fw/Versions/B/XPCServices/Installer.xpc" &&
+        codesign --force --sign - --entitlements "$TMP/downloader.entitlements" \
+            "$fw/Versions/B/XPCServices/Downloader.xpc" &&
+        codesign --force --sign - "$fw/Versions/B/Autoupdate" &&
+        codesign --force --sign - "$fw/Versions/B/Updater.app" &&
+        codesign --force --sign - "$fw" &&
+        codesign --force --sign - "$app"
+    } 2>"$TMP/setup.log" || {
+        # A broken fixture would make every later check look like a sign-app.sh bug.
+        echo "sign-app-tests: cannot build the test bundle: $(cat "$TMP/setup.log")" >&2
+        exit 1
+    }
     echo "$app"
 }
 
@@ -77,7 +83,7 @@ PLIST
 # notarization requires, and still passes a strict verification.
 context="sign with ad-hoc identity"
 mkdir -p "$TMP/signed"
-APP="$(make_app "$TMP/signed")"
+APP="$(make_app "$TMP/signed")" || exit 1
 if ./scripts/sign-app.sh "$APP" - >"$TMP/out" 2>&1; then
     codesign --verify --deep --strict "$APP" 2>/dev/null || fail "$context: strict verification failed"
     expect_runtime "$APP" "$context"
@@ -113,7 +119,7 @@ expect_error "empty identity" "$APP" ""
 expect_error "missing app" "$TMP/missing/StockMonitor.app" -
 # A bundle without Sparkle must not be shipped as signed.
 mkdir -p "$TMP/nosparkle"
-NOSPARKLE="$(make_app "$TMP/nosparkle")"
+NOSPARKLE="$(make_app "$TMP/nosparkle")" || exit 1
 rm -rf "$NOSPARKLE/Contents/Frameworks/Sparkle.framework"
 expect_error "app without Sparkle.framework" "$NOSPARKLE" -
 

@@ -16,14 +16,14 @@ Signing and notarizing need an Apple Developer Program membership ($99 a year), 
 
 ## Decision
 
-- `scripts/sign-app.sh <app> <identity>` re-signs a bundle made by `build.sh` with the Hardened Runtime and a secure timestamp, in this order: `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate`, `Updater.app`, `Sparkle.framework`, then `StockMonitor.app`. It ends with `codesign --verify --deep --strict`. The identity `-` signs ad hoc without a timestamp, which lets `scripts/sign-app-tests.sh` check the order, the Hardened Runtime flags and the entitlements without a certificate.
+- `scripts/sign-app.sh <app> <identity>` re-signs a bundle made by `build.sh` with the Hardened Runtime and a secure timestamp, in this order: `Installer.xpc`, `Downloader.xpc` (keeping its entitlements), `Autoupdate`, `Updater.app`, `Sparkle.framework`, then `StockMonitor.app`. It ends with `codesign --verify --deep --strict`. The identity `-` signs ad hoc without a timestamp, which lets `scripts/sign-app-tests.sh` check without a certificate that every piece of code is re-signed with the Hardened Runtime, that the Downloader keeps its entitlements and that the result passes a strict verification. A wrong order shows up there as a failed verification.
 - `build.sh` is unchanged and still produces the ad-hoc app without the Hardened Runtime, for local builds and CI.
 - The release workflow turns signing on when all five secrets are set: `DEVELOPER_ID_CERTIFICATE_P12`, `DEVELOPER_ID_CERTIFICATE_PASSWORD`, `NOTARY_API_KEY_P8`, `NOTARY_API_KEY_ID` and `NOTARY_API_ISSUER_ID`. It then:
   1. imports the certificate into a temporary keychain, deleted at the end of the run,
   2. runs `sign-app.sh` with the certificate's identity,
-  3. submits a zip of the app with `xcrun notarytool submit --wait`, prints Apple's log and fails if the status is not `Accepted`,
+  3. submits a zip of the app with `xcrun notarytool submit --wait`, and if the status is not `Accepted`, prints Apple's log and fails,
   4. staples the ticket to the app with `xcrun stapler staple`,
-  5. fails unless `spctl --assess --type execute` reports `source=Notarized Developer ID`,
+  5. turns on Gatekeeper assessments if the runner image has them off, then fails unless `spctl --assess --type execute` reports `source=Notarized Developer ID`,
   6. zips the stapled app, and the existing steps sign the zip with EdDSA and publish it (ADR 0015).
 - With none of the five secrets set, the workflow ships the ad-hoc build as before and logs a warning. With only some set, it fails before running the tests, so a half-finished setup never ships an ad-hoc build by mistake.
 - Notarization uses an App Store Connect API key rather than an Apple ID and app-specific password, because a key can be limited to the Developer role and revoked on its own.
