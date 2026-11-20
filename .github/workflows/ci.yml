@@ -37,5 +37,9 @@ jobs:
       - name: Test
         run: ./test.sh
 
+      # Build the same universal app as the release workflow (ADR 0016), so a
+      # change that breaks the x86_64 slice fails here and not after merge.
       - name: Build
+        env:
+          ARCHS: arm64 x86_64
         run: ./build.sh

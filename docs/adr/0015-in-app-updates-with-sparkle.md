@@ -72,7 +72,7 @@ Pages adds a short delay. Its CDN can cache the feed for up to about 10 minutes,
 
 ### Intel support
 
-- **Default:** a universal binary is **not needed from day one**. Releases stay arm64-only (0010), and #33 (universal binary) stays deferred at P3. Intel Macs cannot run the downloaded build, so they have nothing to update. When #33 lands, the embedded Sparkle framework must be universal too, and from then on Intel copies receive updates through the same feed.
+- **Default:** a universal binary is **not needed from day one**. Releases stay arm64-only (0010), and #33 (universal binary) stays deferred at P3. Intel Macs cannot run the downloaded build, so they have nothing to update. When #33 lands, the embedded Sparkle framework must be universal too, and from then on Intel copies receive updates through the same feed. (Done in [0016](0016-universal-binary-for-releases.md): releases are universal, and the Sparkle framework from the SwiftPM artifact already contains `x86_64` and `arm64`.)
 
 ### Release cadence and channels
 

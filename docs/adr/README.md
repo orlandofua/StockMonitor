@@ -13,11 +13,12 @@ This folder records the significant architecture decisions behind StockMonitor, 
 | [0007](0007-persist-settings-in-userdefaults.md) | Persist settings in UserDefaults | Accepted |
 | [0008](0008-continuous-integration-on-github-actions.md) | Continuous integration on GitHub Actions | Accepted |
 | [0009](0009-release-on-merge-with-label-driven-semver.md) | Release on merge with label-driven semantic versions | Accepted |
-| [0010](0010-distribute-unnotarized-builds-on-github-releases.md) | Distribute un-notarized builds on GitHub Releases | Accepted, partly superseded by [0015](0015-in-app-updates-with-sparkle.md) |
+| [0010](0010-distribute-unnotarized-builds-on-github-releases.md) | Distribute un-notarized builds on GitHub Releases | Accepted, partly superseded by [0015](0015-in-app-updates-with-sparkle.md) and [0016](0016-universal-binary-for-releases.md) |
 | [0011](0011-mark-stale-quotes.md) | Mark stale quotes | Accepted |
 | [0012](0012-launch-at-login-with-smappservice.md) | Launch at login with SMAppService | Accepted |
 | [0013](0013-use-conventional-commits.md) | Use Conventional Commits for commit messages and PR titles | Accepted |
 | [0014](0014-configurable-comparison-period-per-symbol.md) | Configurable comparison period per symbol | Accepted |
 | [0015](0015-in-app-updates-with-sparkle.md) | In-app updates with Sparkle, hosted in this repository | Accepted |
+| [0016](0016-universal-binary-for-releases.md) | Universal binary for releases | Accepted |
 
 To add a decision, copy the structure of an existing record, use the next number, and add it to the table. When a decision is replaced, mark the old record "Superseded by NNNN" rather than deleting it.

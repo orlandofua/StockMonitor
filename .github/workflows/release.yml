@@ -38,6 +38,9 @@ jobs:
       SPARKLE_FEED_URL: https://orlandofua.github.io/StockMonitor/appcast.xml
       SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
       SPARKLE_BIN: .build/artifacts/sparkle/Sparkle/bin
+      # Universal app for Apple silicon and Intel (ADR 0016). build.sh fails
+      # if the executable or Sparkle.framework misses one of these.
+      ARCHS: arm64 x86_64
     defaults:
       run:
         # Adds pipefail, so a failing sign_update in a pipe fails the step.
@@ -93,6 +96,7 @@ jobs:
           BUILD_NUMBER: ${{ github.run_number }}
         run: |
           ./build.sh
+          lipo -archs build/StockMonitor.app/Contents/MacOS/StockMonitor
           plist=build/StockMonitor.app/Contents/Info.plist
           feed="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$plist")"
           key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$plist")"
