@@ -17,7 +17,7 @@ If a symbol stops updating (no live stream and no successful poll for twice the 
 
 ## Install
 
-Requirements: macOS 13 (Ventura) or later on a Mac with Apple silicon (M1 or newer). Release builds are arm64 only and do not run on Intel Macs; on an Intel Mac, [build from source](#build-and-run) instead.
+Requirements: macOS 13 (Ventura) or later, on a Mac with Apple silicon or an Intel processor. Release builds are universal binaries, so the same download runs natively on both.
 
 1. Open the [latest release](https://github.com/orlandofua/StockMonitor/releases/latest) and download `StockMonitor-vX.Y.Z.zip` from its Assets list.
 2. Optional: check the download against the `.sha256` file from the same release. Run this in the folder that holds both files. It prints `OK` when the zip is intact:
@@ -72,7 +72,16 @@ SPARKLE_PUBLIC_ED_KEY=<base64 public key> ./build.sh
 
 `./build.sh` fails if the feed URL is set without a valid key, and it fails if the signed bundle does not pass `codesign --verify --deep --strict`.
 
-Every pull request and every push to `main` runs `./test.sh` and then `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
+A plain `./build.sh` builds for the architecture of the Mac it runs on, which is fastest. To build a universal app for Apple silicon and Intel, as releases do, set `ARCHS`:
+
+```sh
+ARCHS="arm64 x86_64" ./build.sh
+lipo -archs build/StockMonitor.app/Contents/MacOS/StockMonitor   # x86_64 arm64
+```
+
+With `ARCHS` set, `./build.sh` fails unless the executable and the embedded Sparkle framework both contain every listed architecture.
+
+Every pull request and every push to `main` runs `./test.sh` and then a universal `./build.sh` on GitHub Actions (`.github/workflows/ci.yml`).
 
 Commit messages and pull request titles follow [Conventional Commits](CONTRIBUTING.md#commit-messages), checked on every pull request by `.github/workflows/commit-lint.yml`. Run `scripts/install-hooks.sh` once to check them locally as you commit.
 

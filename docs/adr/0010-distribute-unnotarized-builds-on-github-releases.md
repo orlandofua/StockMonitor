@@ -4,7 +4,7 @@ Date: 2026-11-18
 
 ## Status
 
-Accepted. Partly superseded by [0015](0015-in-app-updates-with-sparkle.md), which adds in-app updates with Sparkle and serves releases from the now-public repository.
+Accepted. Partly superseded by [0015](0015-in-app-updates-with-sparkle.md), which adds in-app updates with Sparkle and serves releases from the now-public repository, and by [0016](0016-universal-binary-for-releases.md), which makes release builds universal so they also run on Intel Macs.
 
 ## Context
 
@@ -20,7 +20,7 @@ The repository is private, so release assets can only be downloaded by GitHub ac
 
 - Distribute the app only as GitHub Release assets: `StockMonitor-vX.Y.Z.zip`, made with `ditto -c -k --sequesterRsrc --keepParent` so the bundle's signature and metadata survive, and `StockMonitor-vX.Y.Z.zip.sha256` for checking the download. No DMG, installer package, Homebrew cask, or auto-updater for now.
 - Ship the ad-hoc signed, un-notarized build, and document in the README how to open it past Gatekeeper: Open Anyway in System Settings (all supported versions), Control-click > Open (macOS 13 and 14 only), or `xattr -dr com.apple.quarantine` (all supported versions).
-- Support macOS 13 or later on Apple silicon for downloaded builds, matching `LSMinimumSystemVersion` 13.0. Intel Macs build from source.
+- Support macOS 13 or later on Apple silicon for downloaded builds, matching `LSMinimumSystemVersion` 13.0. Intel Macs build from source. (Superseded by 0016: downloaded builds now support Intel Macs too.)
 - This refines the Consequences of ADR 0009, which says users must remove the quarantine attribute before the first launch. Removing it with `xattr` is one of the three options above; Open Anyway and Control-click > Open work too.
 - Developer ID signing and notarization are deferred to issue #12. When they land, a new ADR supersedes this one and the README drops the Gatekeeper steps.
 
@@ -30,5 +30,5 @@ The repository is private, so release assets can only be downloaded by GitHub ac
 - Every user must take one extra, security-related step on first launch and again after each update, and must trust the download without Apple's malware check. The SHA-256 file only proves the zip matches what the workflow uploaded.
 - Users get no update notice. They check the Releases page and replace the app by hand. Settings survive because they live in `UserDefaults` (ADR 0007).
 - Only GitHub accounts with access to the private repository can download releases. Making releases available to anyone needs the repository, or a separate distribution repository, to be public.
-- Intel Mac users cannot use the downloaded build until the release job builds a universal binary.
+- Intel Mac users cannot use the downloaded build until the release job builds a universal binary. (Resolved by 0016.)
 - The Gatekeeper wording and bypass steps depend on the macOS version and may change in future releases, so the README needs checking when a new macOS ships.
