@@ -33,9 +33,9 @@ Requirements: macOS 13 (Ventura) or later, on a Mac with Apple silicon or an Int
    ```
 
 3. Double-click the zip to unzip it, then drag `StockMonitor.app` into `/Applications`. Safari may unzip the file for you, in which case `StockMonitor.app` is already in Downloads.
-4. Open the app once past Gatekeeper, using one of the options below.
+4. Open the app. If macOS blocks it, open it once past Gatekeeper, using one of the options below.
 
-The app is ad-hoc signed and not notarized by Apple, so the first launch is blocked with a message such as "Apple could not verify “StockMonitor” is free of malware" (macOS 15 and later) or "“StockMonitor” can’t be opened because Apple cannot check it for malicious software" (macOS 13 and 14). This happens only once per downloaded copy. Pick one way to allow it:
+Releases are signed with a Developer ID and notarized by Apple once the repository owner has set this up (see [Signing and notarization](#signing-and-notarization)). A notarized release opens on the first try. Until then, and for older releases, the app is ad-hoc signed and not notarized, so the first launch is blocked with a message such as "Apple could not verify “StockMonitor” is free of malware" (macOS 15 and later) or "“StockMonitor” can’t be opened because Apple cannot check it for malicious software" (macOS 13 and 14). This happens only once per downloaded copy. Pick one way to allow it:
 
 - **System Settings (any macOS 13+):** double-click `StockMonitor.app` and close the warning with **Done** or **OK**. Open **System Settings > Privacy & Security**, scroll to **Security**, and click **Open Anyway** next to the message about StockMonitor. Confirm with **Open Anyway** (or **Open**) and your password or Touch ID. The button appears for about an hour after the blocked launch.
 - **Right-click (macOS 13 and 14 only):** Control-click or right-click `StockMonitor.app` in Finder, choose **Open**, then click **Open** in the dialog. macOS 15 removed this shortcut, so on macOS 15 and later use one of the other options.
@@ -50,7 +50,7 @@ StockMonitor is a menu bar app with no Dock icon or window. After it opens, look
 
 Releases after v1.3.0 update themselves from inside the app, without another Gatekeeper step (see [Updates](#updates)). Releases up to v1.3.0 have no updater, so move from those to a newer release [by hand](#update-by-hand) once.
 
-Developer ID signing and notarization, which would remove the Gatekeeper step, are planned in [#12](https://github.com/orlandofua/StockMonitor/issues/12) and not done yet. See [ADR 0010](docs/adr/0010-distribute-unnotarized-builds-on-github-releases.md).
+To check whether a downloaded copy is notarized, run `spctl --assess --type execute -v /Applications/StockMonitor.app`. A notarized copy prints `accepted` and `source=Notarized Developer ID`. See [ADR 0017](docs/adr/0017-developer-id-signing-and-notarization.md).
 
 ## Build and run
 
@@ -120,6 +120,31 @@ One-time setup by the repository owner, on their own Mac:
 
 To pull a bad release from the feed, or to back up or replace the signing key, see [Update feed and signing key](CONTRIBUTING.md#update-feed-and-signing-key) in CONTRIBUTING.md.
 
+### Signing and notarization
+
+When five more secrets are set, the release run signs the app with a Developer ID, notarizes it with Apple and staples the ticket to the app before zipping it ([ADR 0017](docs/adr/0017-developer-id-signing-and-notarization.md)). `scripts/sign-app.sh` re-signs the embedded `Sparkle.framework` and its helpers first, then the app, all with the Hardened Runtime. The run fails unless Gatekeeper reports `source=Notarized Developer ID`.
+
+Without any of these secrets, releases stay ad-hoc signed and not notarized, and the run logs a warning. If only some are set, the run fails in its first steps.
+
+| Name | Kind | Value |
+| --- | --- | --- |
+| `DEVELOPER_ID_CERTIFICATE_P12` | Actions secret | The Developer ID Application certificate and its private key, exported as a `.p12` file and base64-encoded |
+| `DEVELOPER_ID_CERTIFICATE_PASSWORD` | Actions secret | The password of the `.p12` file |
+| `NOTARY_API_KEY_P8` | Actions secret | The contents of the App Store Connect API key file (`AuthKey_XXXXXXXXXX.p8`) |
+| `NOTARY_API_KEY_ID` | Actions secret | The API key's ID, for example `XXXXXXXXXX` |
+| `NOTARY_API_ISSUER_ID` | Actions secret | The issuer ID shown above the key list in App Store Connect (a UUID) |
+
+One-time setup by the repository owner, who needs a paid Apple Developer Program membership:
+
+1. Create a **Developer ID Application** certificate (Xcode > Settings > Accounts > Manage Certificates, or developer.apple.com > Certificates). In Keychain Access, export the certificate together with its private key as `developer-id.p12`, with a strong password.
+2. Store them: `base64 -i developer-id.p12 | gh secret set DEVELOPER_ID_CERTIFICATE_P12` and `gh secret set DEVELOPER_ID_CERTIFICATE_PASSWORD`, which prompts for the password.
+3. In App Store Connect > Users and Access > Integrations > App Store Connect API, create a team key with the **Developer** role and download the `.p8` file. It can be downloaded only once.
+4. Store it: `gh secret set NOTARY_API_KEY_P8 < AuthKey_XXXXXXXXXX.p8`, `gh secret set NOTARY_API_KEY_ID --body XXXXXXXXXX` and `gh secret set NOTARY_API_ISSUER_ID --body <issuer ID>`.
+5. Back up the `.p12`, its password and the `.p8` offline, as for the EdDSA key, then delete the local copies. Never commit them.
+6. After the next release, download it and check it with `spctl --assess --type execute -v StockMonitor.app`. Also check that a copy of the previous, ad-hoc release updates itself to it.
+
+Once releases are notarized, keep the secrets set. Going back to ad-hoc releases is not supported, because Sparkle may refuse an update whose code signature does not match the installed app. Renew the membership before it expires: an expired membership makes every release run fail at the notarization step.
+
 ## Usage
 
 Click any ticker in the menu bar to:
@@ -178,7 +203,7 @@ Install a new release by hand when you run v1.3.0 or older, when **Check for Upd
 
 1. Quit StockMonitor from any of its menus.
 2. Download the new release as in [Install](#install), steps 1 to 3, and replace `StockMonitor.app` in `/Applications` with it.
-3. Open it past Gatekeeper again, as in [Install](#install), step 4.
+3. Open it. If macOS blocks it, open it past Gatekeeper, as in [Install](#install), step 4.
 
 Your symbols and settings are kept.
 
