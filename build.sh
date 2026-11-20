@@ -6,6 +6,9 @@
 # SPARKLE_FEED_URL       goes into SUFeedURL. Leave it unset for a build that
 #                        never checks for updates (the default).
 # SPARKLE_PUBLIC_ED_KEY  goes into SUPublicEDKey. Required with SPARKLE_FEED_URL.
+# ARCHS                  space-separated architectures, e.g. "arm64 x86_64" for a
+#                        universal app (what releases ship). Leave it unset to
+#                        build for this Mac's architecture only, which is faster.
 #
 # See scripts/make-info-plist.sh for the Info.plist, and ADR 0015 for Sparkle.
 set -euo pipefail
@@ -15,13 +18,21 @@ export VERSION="${VERSION:-1.0}"
 export BUILD_NUMBER="${BUILD_NUMBER:-${GITHUB_RUN_NUMBER:-1}}"
 export SPARKLE_FEED_URL="${SPARKLE_FEED_URL:-}"
 export SPARKLE_PUBLIC_ED_KEY="${SPARKLE_PUBLIC_ED_KEY:-}"
+ARCHS="${ARCHS:-}"
 
 # Check the Info.plist inputs before spending time on the build.
 INFO_PLIST="$(scripts/make-info-plist.sh)"
 
 # SwiftPM does not add an rpath for embedded frameworks, so the executable
 # would not find Contents/Frameworks/Sparkle.framework without this one.
-swift build -c release -Xlinker -rpath -Xlinker @executable_path/../Frameworks
+BUILD_ARGS=(-c release)
+for arch in $ARCHS; do
+    BUILD_ARGS+=(--arch "$arch")
+done
+swift build "${BUILD_ARGS[@]}" -Xlinker -rpath -Xlinker @executable_path/../Frameworks
+# A multi-architecture build writes to a different directory than a
+# single-architecture one, so ask SwiftPM where the executable is.
+BIN_PATH="$(swift build "${BUILD_ARGS[@]}" --show-bin-path)"
 
 # Sparkle's SwiftPM artifact ships an ad-hoc signed framework. Copy it with
 # ditto, which keeps the Versions/Current symlinks and the framework's own
@@ -35,7 +46,7 @@ fi
 APP=build/StockMonitor.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Frameworks"
-cp .build/release/StockMonitor "$APP/Contents/MacOS/"
+cp "$BIN_PATH/StockMonitor" "$APP/Contents/MacOS/"
 ditto "$FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
 printf '%s\n' "$INFO_PLIST" > "$APP/Contents/Info.plist"
 
@@ -46,7 +57,18 @@ printf '%s\n' "$INFO_PLIST" > "$APP/Contents/Info.plist"
 codesign --force --sign - "$APP"
 codesign --verify --deep --strict "$APP"
 
-echo "Built $APP (version $VERSION, build $BUILD_NUMBER)"
+# Every requested architecture must be in the executable and in Sparkle, or
+# Macs of the missing architecture can neither launch the app nor update it.
+for arch in $ARCHS; do
+    for binary in "$APP/Contents/MacOS/StockMonitor" "$APP/Contents/Frameworks/Sparkle.framework/Sparkle"; do
+        if ! lipo "$binary" -verify_arch "$arch"; then
+            echo "error: $binary has no $arch slice (it has: $(lipo -archs "$binary"))" >&2
+            exit 1
+        fi
+    done
+done
+
+echo "Built $APP (version $VERSION, build $BUILD_NUMBER, architectures: $(lipo -archs "$APP/Contents/MacOS/StockMonitor"))"
 if [[ -n "$SPARKLE_FEED_URL" ]]; then
     echo "Update feed: $SPARKLE_FEED_URL"
 else
