@@ -8,6 +8,12 @@ name: Release
 # update feed on the gh-pages branch (docs/adr/0015-in-app-updates-with-sparkle.md).
 # It needs the SPARKLE_ED_PRIVATE_KEY secret and the SPARKLE_PUBLIC_ED_KEY
 # variable; see "Update feed" in README.md.
+#
+# When the Developer ID and notary secrets are set, the run also signs the app
+# with Developer ID, notarizes it and staples the ticket before zipping it
+# (docs/adr/0017-developer-id-signing-and-notarization.md). Without them it
+# ships the ad-hoc signed build, with a warning. See "Signing and
+# notarization" in README.md.
 on:
   pull_request:
     types: [closed]
@@ -23,7 +29,8 @@ jobs:
       github.event.pull_request.merged == true &&
       !contains(github.event.pull_request.labels.*.name, 'skip-release')
     runs-on: macos-15
-    timeout-minutes: 20
+    # Notarization usually takes a few minutes, but Apple's service can be slow.
+    timeout-minutes: 45
     # Run releases one at a time so two merges never compute the same tag.
     # This sits on the job, not the workflow, so closes that skip the job
     # (unmerged or skip-release) never join the group and cannot displace a
@@ -61,6 +68,35 @@ jobs:
           : "${SPARKLE_FEED_URL:?must be set for a release}"
           : "${SPARKLE_PUBLIC_ED_KEY:?must be set for a release (repository variable SPARKLE_PUBLIC_ED_KEY)}"
           : "${SPARKLE_ED_PRIVATE_KEY:?must be set for a release (repository secret SPARKLE_ED_PRIVATE_KEY)}"
+
+      # All five secrets turn on Developer ID signing and notarization, none
+      # keeps the ad-hoc build (ADR 0017). Some but not all is a setup mistake,
+      # so fail before doing any work instead of shipping an ad-hoc build.
+      - name: Check the Developer ID setup
+        id: signing
+        env:
+          DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          names=(DEVELOPER_ID_CERTIFICATE_P12 DEVELOPER_ID_CERTIFICATE_PASSWORD
+                 NOTARY_API_KEY_P8 NOTARY_API_KEY_ID NOTARY_API_ISSUER_ID)
+          set_names=() missing=()
+          for name in "${names[@]}"; do
+            if [[ -n "${!name}" ]]; then set_names+=("$name"); else missing+=("$name"); fi
+          done
+          if ((${#set_names[@]} == ${#names[@]})); then
+            echo "Developer ID signing and notarization: on"
+            echo "notarize=true" >> "$GITHUB_OUTPUT"
+          elif ((${#set_names[@]} == 0)); then
+            echo "::warning::Developer ID secrets are not set, so this release is ad-hoc signed and not notarized. Users must open it past Gatekeeper (ADR 0017)."
+            echo "notarize=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Some Developer ID secrets are set but these are missing: ${missing[*]}"
+            exit 1
+          fi
 
       - name: Show toolchain
         run: |
@@ -102,6 +138,87 @@ jobs:
           key="$(/usr/libexec/PlistBuddy -c 'Print :SUPublicEDKey' "$plist")"
           if [[ "$feed" != "$SPARKLE_FEED_URL" || "$key" != "$SPARKLE_PUBLIC_ED_KEY" ]]; then
             echo "::error::The built Info.plist has the wrong SUFeedURL or SUPublicEDKey"
+            exit 1
+          fi
+
+      # A temporary keychain that only this run uses, deleted at the end.
+      - name: Import the Developer ID certificate
+        id: identity
+        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        env:
+          DEVELOPER_ID_CERTIFICATE_P12: ${{ secrets.DEVELOPER_ID_CERTIFICATE_P12 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        run: |
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          keychain_password="$(openssl rand -base64 32)"
+          certificate="$RUNNER_TEMP/developer-id.p12"
+          trap 'rm -f "$certificate"' EXIT
+          printf '%s' "$DEVELOPER_ID_CERTIFICATE_P12" | base64 --decode > "$certificate"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$certificate" -k "$keychain" -P "$DEVELOPER_ID_CERTIFICATE_PASSWORD" \
+            -f pkcs12 -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Sign by the certificate's SHA-1 hash, which names exactly one identity.
+          identities="$(security find-identity -v -p codesigning "$keychain" | grep '"Developer ID Application: ' || true)"
+          if [[ "$(grep -c . <<<"$identities")" != 1 ]]; then
+            echo "::error::Expected one Developer ID Application identity in the certificate, found: ${identities:-none}"
+            exit 1
+          fi
+          echo "Signing identity: $(sed -E 's/.*"(.*)"/\1/' <<<"$identities")"
+          echo "hash=$(awk '{print $2}' <<<"$identities")" >> "$GITHUB_OUTPUT"
+
+      - name: Sign with Developer ID
+        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        env:
+          IDENTITY: ${{ steps.identity.outputs.hash }}
+        run: |
+          ./scripts/sign-app.sh build/StockMonitor.app "$IDENTITY"
+          codesign -dv build/StockMonitor.app 2>&1 | grep -E '^(Authority|TeamIdentifier|Timestamp|CodeDirectory)'
+
+      # notarytool uploads a zip of the app and waits for Apple's verdict. The
+      # ticket is then stapled to the app itself, so Gatekeeper can check it
+      # offline, and the Package step zips the stapled app.
+      - name: Notarize
+        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        env:
+          NOTARY_API_KEY_P8: ${{ secrets.NOTARY_API_KEY_P8 }}
+          NOTARY_API_KEY_ID: ${{ secrets.NOTARY_API_KEY_ID }}
+          NOTARY_API_ISSUER_ID: ${{ secrets.NOTARY_API_ISSUER_ID }}
+        run: |
+          key="$RUNNER_TEMP/notary-key.p8"
+          upload="$RUNNER_TEMP/notarize.zip"
+          trap 'rm -f "$key" "$upload"' EXIT
+          (umask 077 && printf '%s\n' "$NOTARY_API_KEY_P8" > "$key")
+          auth=(--key "$key" --key-id "$NOTARY_API_KEY_ID" --issuer "$NOTARY_API_ISSUER_ID")
+          ditto -c -k --sequesterRsrc --keepParent build/StockMonitor.app "$upload"
+          result="$(xcrun notarytool submit "$upload" "${auth[@]}" --wait --timeout 30m --output-format json)"
+          echo "$result"
+          id="$(jq -r '.id // empty' <<<"$result")"
+          status="$(jq -r '.status // empty' <<<"$result")"
+          if [[ "$status" != "Accepted" ]]; then
+            echo "::error::Notarization finished with status '${status:-unknown}'"
+            [[ -n "$id" ]] && xcrun notarytool log "$id" "${auth[@]}" || true
+            exit 1
+          fi
+          xcrun stapler staple build/StockMonitor.app
+          xcrun stapler validate build/StockMonitor.app
+
+      # The acceptance check from #12: Gatekeeper must accept the app as
+      # notarized Developer ID code, the same check a downloaded copy gets.
+      - name: Check Gatekeeper accepts the app
+        if: steps.version.outputs.tag != '' && steps.signing.outputs.notarize == 'true'
+        run: |
+          assessment="$(spctl --assess --type execute -vv build/StockMonitor.app 2>&1)" || {
+            echo "$assessment"
+            echo "::error::Gatekeeper rejected the notarized app"
+            exit 1
+          }
+          echo "$assessment"
+          if ! grep -q 'source=Notarized Developer ID' <<<"$assessment"; then
+            echo "::error::Gatekeeper did not report source=Notarized Developer ID"
             exit 1
           fi
 
@@ -200,3 +317,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ steps.version.outputs.tag }}
         run: gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --draft=false
+
+      - name: Delete the signing keychain
+        if: always() && steps.identity.outcome != 'skipped'
+        run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true

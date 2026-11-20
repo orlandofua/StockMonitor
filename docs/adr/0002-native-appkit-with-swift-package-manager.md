@@ -4,7 +4,7 @@ Date: 2026-11-17
 
 ## Status
 
-Accepted
+Accepted. The signing consequence is superseded by [0017](0017-developer-id-signing-and-notarization.md).
 
 ## Context
 
@@ -28,5 +28,5 @@ Options considered:
 
 - No Xcode required; `./build.sh` is the whole build.
 - The app has no asset catalog, app icon, or entitlements file. Adding these later means extending `build.sh` or moving to an Xcode project.
-- The ad hoc signature is fine for local use. Distributing the app to other machines would need a Developer ID signature and notarization.
+- The ad hoc signature is fine for local use. Distributing the app to other machines would need a Developer ID signature and notarization. (Done for releases in 0017.)
 - Swift 5 language mode avoids strict concurrency checking. Moving to Swift 6 mode will need `@MainActor` annotations on the app delegate and the stream client.

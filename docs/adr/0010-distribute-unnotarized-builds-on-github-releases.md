@@ -4,7 +4,7 @@ Date: 2026-11-18
 
 ## Status
 
-Accepted. Partly superseded by [0015](0015-in-app-updates-with-sparkle.md), which adds in-app updates with Sparkle and serves releases from the now-public repository, and by [0016](0016-universal-binary-for-releases.md), which makes release builds universal so they also run on Intel Macs.
+Accepted. Partly superseded by [0015](0015-in-app-updates-with-sparkle.md), which adds in-app updates with Sparkle and serves releases from the now-public repository, by [0016](0016-universal-binary-for-releases.md), which makes release builds universal so they also run on Intel Macs, and by [0017](0017-developer-id-signing-and-notarization.md), which signs and notarizes releases once the Developer ID secrets are set.
 
 ## Context
 
@@ -22,7 +22,7 @@ The repository is private, so release assets can only be downloaded by GitHub ac
 - Ship the ad-hoc signed, un-notarized build, and document in the README how to open it past Gatekeeper: Open Anyway in System Settings (all supported versions), Control-click > Open (macOS 13 and 14 only), or `xattr -dr com.apple.quarantine` (all supported versions).
 - Support macOS 13 or later on Apple silicon for downloaded builds, matching `LSMinimumSystemVersion` 13.0. Intel Macs build from source. (Superseded by 0016: downloaded builds now support Intel Macs too.)
 - This refines the Consequences of ADR 0009, which says users must remove the quarantine attribute before the first launch. Removing it with `xattr` is one of the three options above; Open Anyway and Control-click > Open work too.
-- Developer ID signing and notarization are deferred to issue #12. When they land, a new ADR supersedes this one and the README drops the Gatekeeper steps.
+- Developer ID signing and notarization are deferred to issue #12. When they land, a new ADR supersedes this one and the README drops the Gatekeeper steps. (Superseded by 0017: releases are signed and notarized when the Developer ID secrets are set, and the Gatekeeper steps stay only for ad-hoc releases.)
 
 ## Consequences
 
