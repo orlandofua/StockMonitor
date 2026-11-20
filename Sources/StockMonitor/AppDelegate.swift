@@ -10,13 +10,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let defaults = UserDefaults.standard
     private var items: [String: NSStatusItem] = [:]
-    private var quotes: [String: Quote] = [:]
-    /// Why the latest poll failed, per symbol (short text such as "timeout").
-    /// Cleared by the next successful poll or stream tick.
-    private var lastError: [String: String] = [:]
-    /// When good data last arrived for each symbol, by the local clock (issue #9).
-    /// Drives the stale state; see `Staleness`.
-    private var lastUpdate: [String: Date] = [:]
+    /// Each tracked symbol's quote, last error and last good-data time (issue #42).
+    private lazy var tickers = TickerState(symbols: symbols)
     /// Each symbol's comparison period (issue #16, docs/adr/0014).
     private lazy var periods = ComparePeriodStore(defaults: defaults)
     /// Baselines for periods other than 1D, fetched once per symbol, period and day.
@@ -104,11 +99,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (sym, item) in items where !wanted.contains(sym) {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
-            quotes[sym] = nil
+            tickers.remove(sym)
             lastTickReceived[sym] = nil
             lastPoll[sym] = nil
-            lastUpdate[sym] = nil
-            lastError[sym] = nil
             baselines.remove(sym)
         }
         stream.setSymbols(wanted)
@@ -125,10 +118,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render(_ sym: String) {
-        guard let button = items[sym]?.button else { return }
-        let q = quotes[sym]
+        guard let button = items[sym]?.button, let view = tickers.view(sym) else { return }
+        let q = view.quote
         let stale = q != nil && isStale(sym)
-        let price = q.map { Formatting.price($0.price) } ?? (lastError[sym] != nil ? "err" : "…")
+        let price = view.priceText
         let badge = q.map { Comparison.badge(quote: $0, state: baselineState(sym)) }
         let change = badge.map { showPercent ? Formatting.percent($0.percent) : Formatting.change($0.change) }
         button.image = TickerImage.make(symbol: sym, price: price, change: change,
@@ -154,7 +147,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// than needed. Update times only move forward, so firing early is harmless:
     /// the handler redraws and schedules again.
     private func scheduleStaleCheck(reset: Bool = false) {
-        let updates = symbols.compactMap { quotes[$0] != nil ? lastUpdate[$0] : nil }
+        let updates = symbols.compactMap { sym in
+            tickers.view(sym).flatMap { $0.quote != nil ? $0.lastUpdate : nil }
+        }
         let next = Staleness.nextRecheck(lastUpdates: updates, pollInterval: interval, now: Date())
         if !reset, let current = staleTimer, current.isValid, let next, current.fireDate <= next { return }
         staleTimer?.invalidate()
@@ -176,12 +171,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func isStale(_ sym: String) -> Bool {
-        Staleness.isStale(lastUpdate: lastUpdate[sym], isLive: isLive(sym), pollInterval: interval, now: Date())
+        Staleness.isStale(lastUpdate: tickers.view(sym)?.lastUpdate, isLive: isLive(sym), pollInterval: interval, now: Date())
     }
 
     /// "Updated …" or "Stale: last update …", plus the last error if there is one.
     private func freshnessLines(_ sym: String, quote: Quote, stale: Bool) -> [String] {
-        Staleness.menuLines(updatedAt: quote.fetchedAt, lastUpdate: lastUpdate[sym], lastError: lastError[sym],
+        let view = tickers.view(sym)
+        return Staleness.menuLines(updatedAt: quote.fetchedAt, lastUpdate: view?.lastUpdate, lastError: view?.lastError,
                             isStale: stale) { $0.formatted(date: .omitted, time: .standard) }
     }
 
@@ -227,18 +223,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                     let polled = try await QuoteService.fetch(sym)
                     // If the stream is live, its price is fresher than the poll's.
                     // Keep it and take only the metadata from the poll.
-                    if isLive(sym), let current = quotes[sym] {
-                        quotes[sym] = current.withMetadata(from: polled)
+                    if isLive(sym), let current = tickers.view(sym)?.quote {
+                        tickers.received(current.withMetadata(from: polled), at: Date())
                     } else {
-                        quotes[sym] = polled
+                        tickers.received(polled, at: Date())
                     }
-                    lastUpdate[sym] = Date()
-                    lastError[sym] = nil
                     scheduleStaleCheck()
                 } catch {
                     // Record the failure even when an older quote is still shown,
                     // so the menu can say why the price stopped updating.
-                    lastError[sym] = Staleness.errorSummary(error)
+                    tickers.pollFailed(sym, reason: Staleness.errorSummary(error))
                 }
                 render(sym)
             }
@@ -248,14 +242,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func handle(_ tick: StreamTick) {
         let sym = tick.symbol
         guard items[sym] != nil else { return }
-        let previous = quotes[sym]
+        let previous = tickers.view(sym)?.quote
         // Ignore out-of-order ticks.
         if let previous, isLive(sym), tick.time < previous.fetchedAt { return }
 
-        quotes[sym] = Quote.applying(tick, to: previous)
+        tickers.received(Quote.applying(tick, to: previous), at: Date())
         lastTickReceived[sym] = Date()
-        lastUpdate[sym] = Date()
-        lastError[sym] = nil
         scheduleStaleCheck()
         render(sym)
     }
@@ -266,14 +258,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         guard let sym = items.first(where: { $0.value.menu === menu })?.key else { return }
 
-        if let q = quotes[sym] {
+        let view = tickers.view(sym)
+        if let q = view?.quote {
             menu.addItem(disabled(q.name, bold: true))
             menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
             Comparison.menuLines(quote: q, period: periods.period(for: sym), state: baselineState(sym))
                 .forEach { menu.addItem(disabled($0)) }
             freshnessLines(sym, quote: q, stale: isStale(sym)).forEach { menu.addItem(disabled($0)) }
         } else {
-            menu.addItem(disabled(lastError[sym].map { "\(sym): failed to load (\($0))" } ?? "\(sym): loading…"))
+            menu.addItem(disabled(view?.lastError.map { "\(sym): failed to load (\($0))" } ?? "\(sym): loading…"))
         }
         menu.addItem(disabled(isLive(sym) ? "● Live (streaming)" : "Polling every \(intervalLabel(interval))"))
         menu.addItem(.separator())
@@ -352,10 +345,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let sym = added.symbol
         symbols.append(sym)
         // Use the quote from the check so the new item shows its price immediately.
-        quotes[sym] = added.quote
+        tickers.add(added.quote)
         lastPoll[sym] = added.quote.fetchedAt
-        lastUpdate[sym] = added.quote.fetchedAt
-        lastError[sym] = nil
         // Rebuild all items so menu bar order matches the list order.
         items.values.forEach { NSStatusBar.system.removeStatusItem($0) }
         items.removeAll()
