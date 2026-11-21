@@ -23,12 +23,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Live streaming (see docs/adr/0005). Polling remains the fallback.
     private let stream = QuoteStream()
-    /// When the last stream tick was received, per symbol. Drives the "live" state.
-    private var lastTickReceived: [String: Date] = [:]
     /// When each symbol was last polled over HTTP.
     private var lastPoll: [String: Date] = [:]
-    /// A symbol counts as live if a tick arrived within this window.
-    private let liveWindow: TimeInterval = 120
     /// Live symbols are still polled this often to refresh name and previous close.
     private let livePollInterval: TimeInterval = 300
 
@@ -100,7 +96,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
             tickers.remove(sym)
-            lastTickReceived[sym] = nil
             lastPoll[sym] = nil
             baselines.remove(sym)
         }
@@ -118,7 +113,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func render(_ sym: String) {
-        guard let button = items[sym]?.button, let view = tickers.view(sym) else { return }
+        guard let button = items[sym]?.button, let view = tickerView(sym) else { return }
         let q = view.quote
         let stale = q != nil && isStale(sym)
         let price = view.priceText
@@ -148,7 +143,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// the handler redraws and schedules again.
     private func scheduleStaleCheck(reset: Bool = false) {
         let updates = symbols.compactMap { sym in
-            tickers.view(sym).flatMap { $0.quote != nil ? $0.lastUpdate : nil }
+            tickerView(sym).flatMap { $0.quote != nil ? $0.lastUpdate : nil }
         }
         let next = Staleness.nextRecheck(lastUpdates: updates, pollInterval: interval, now: Date())
         if !reset, let current = staleTimer, current.isValid, let next, current.fireDate <= next { return }
@@ -165,18 +160,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         staleTimer = check
     }
 
-    private func isLive(_ sym: String) -> Bool {
-        guard let last = lastTickReceived[sym] else { return false }
-        return Date().timeIntervalSince(last) < liveWindow
+    /// What the symbol's ticker and menu show now.
+    private func tickerView(_ sym: String, now: Date = Date()) -> TickerState.View? {
+        tickers.view(sym, now: now, pollIntervalLabel: intervalLabel(interval))
     }
 
     private func isStale(_ sym: String) -> Bool {
-        Staleness.isStale(lastUpdate: tickers.view(sym)?.lastUpdate, isLive: isLive(sym), pollInterval: interval, now: Date())
+        let view = tickerView(sym)
+        return Staleness.isStale(lastUpdate: view?.lastUpdate, isLive: view?.isLive ?? false,
+                                 pollInterval: interval, now: Date())
     }
 
     /// "Updated …" or "Stale: last update …", plus the last error if there is one.
     private func freshnessLines(_ sym: String, quote: Quote, stale: Bool) -> [String] {
-        let view = tickers.view(sym)
+        let view = tickerView(sym)
         return Staleness.menuLines(updatedAt: quote.fetchedAt, lastUpdate: view?.lastUpdate, lastError: view?.lastError,
                             isStale: stale) { $0.formatted(date: .omitted, time: .standard) }
     }
@@ -214,20 +211,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         symbols.forEach(render)
         for sym in symbols {
             loadBaselineIfNeeded(sym)
-            if !force, isLive(sym), let polled = lastPoll[sym], now.timeIntervalSince(polled) < livePollInterval {
+            if !force, tickerView(sym, now: now)?.isLive == true, let polled = lastPoll[sym],
+               now.timeIntervalSince(polled) < livePollInterval {
                 continue
             }
             lastPoll[sym] = now
             Task { @MainActor in
                 do {
-                    let polled = try await QuoteService.fetch(sym)
-                    // If the stream is live, its price is fresher than the poll's.
-                    // Keep it and take only the metadata from the poll.
-                    if isLive(sym), let current = tickers.view(sym)?.quote {
-                        tickers.received(current.withMetadata(from: polled), at: Date())
-                    } else {
-                        tickers.received(polled, at: Date())
-                    }
+                    // While the symbol is live, ticker state keeps the streamed price.
+                    tickers.pollSucceeded(try await QuoteService.fetch(sym), at: Date())
                     scheduleStaleCheck()
                 } catch {
                     // Record the failure even when an older quote is still shown,
@@ -239,17 +231,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    /// Ticker state applies the merge, out-of-order and untracked-symbol rules.
     private func handle(_ tick: StreamTick) {
-        let sym = tick.symbol
-        guard items[sym] != nil else { return }
-        let previous = tickers.view(sym)?.quote
-        // Ignore out-of-order ticks.
-        if let previous, isLive(sym), tick.time < previous.fetchedAt { return }
-
-        tickers.received(Quote.applying(tick, to: previous), at: Date())
-        lastTickReceived[sym] = Date()
+        tickers.tickReceived(tick, at: Date())
         scheduleStaleCheck()
-        render(sym)
+        render(tick.symbol)
     }
 
     // MARK: Menu
@@ -258,7 +244,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         guard let sym = items.first(where: { $0.value.menu === menu })?.key else { return }
 
-        let view = tickers.view(sym)
+        let view = tickerView(sym)
         if let q = view?.quote {
             menu.addItem(disabled(q.name, bold: true))
             menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
@@ -268,7 +254,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else {
             menu.addItem(disabled(view?.lastError.map { "\(sym): failed to load (\($0))" } ?? "\(sym): loading…"))
         }
-        menu.addItem(disabled(isLive(sym) ? "● Live (streaming)" : "Polling every \(intervalLabel(interval))"))
+        if let statusLine = view?.statusLine { menu.addItem(disabled(statusLine)) }
         menu.addItem(.separator())
 
         menu.addItem(action("Refresh Now", #selector(refreshNow), key: "r"))
