@@ -6,6 +6,15 @@
         <description>Updates for StockMonitor</description>
         <language>en</language>
         <item>
+            <title>Version 1.4.3</title>
+            <pubDate>Mon, 23 Nov 2026 14:23:07 +0000</pubDate>
+            <sparkle:version>21</sparkle:version>
+            <sparkle:shortVersionString>1.4.3</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>13.0.0</sparkle:minimumSystemVersion>
+            <sparkle:releaseNotesLink>https://github.com/orlandofua/StockMonitor/releases/tag/v1.4.3</sparkle:releaseNotesLink>
+            <enclosure url="https://github.com/orlandofua/StockMonitor/releases/download/v1.4.3/StockMonitor-v1.4.3.zip" length="1315115" type="application/octet-stream" sparkle:edSignature="t8qZ55DBqKTOrEiKlZ8dV5FZhj4V/066OEuAABZkubTM8Y8/bfzknD/aPLBgomTlwu52lg1xGqLGewm1oNaVCg=="/>
+        </item>
+        <item>
             <title>Version 1.4.2</title>
             <pubDate>Sat, 21 Nov 2026 02:35:34 +0000</pubDate>
             <sparkle:version>20</sparkle:version>
