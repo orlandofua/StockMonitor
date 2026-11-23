@@ -31,6 +31,9 @@ struct TickerState {
 
     /// A symbol is live while its last tick arrived less than this long ago (docs/adr/0005).
     static let liveWindow: TimeInterval = 120
+    /// Live symbols are still polled this often, to refresh name, currency and
+    /// previous close (docs/adr/0005).
+    static let livePollInterval: TimeInterval = 300
 
     private struct Entry {
         var quote: Quote?
@@ -41,6 +44,8 @@ struct TickerState {
         /// The exchange time of the last accepted tick. Only ever compared with
         /// other tick times, never with a local poll time (docs/adr/0011).
         var lastTickTime: Date?
+        /// When the last poll started, by the local clock.
+        var lastPoll: Date?
 
         /// Good data (a successful poll or an accepted tick) arrived at local time `now`.
         mutating func store(_ quote: Quote, at now: Date) {
@@ -62,15 +67,35 @@ struct TickerState {
     }
 
     /// Starts tracking a symbol with the quote from its Add Symbol check, so it
-    /// shows a price at once. The quote's time counts as the last good data.
+    /// shows a price at once. The quote's time counts as the last good data
+    /// and as the last poll.
     mutating func add(_ quote: Quote) {
-        entries[quote.symbol] = Entry(quote: quote, lastUpdate: quote.fetchedAt)
+        entries[quote.symbol] = Entry(quote: quote, lastUpdate: quote.fetchedAt, lastPoll: quote.fetchedAt)
     }
 
     /// Stops tracking a symbol and forgets everything about it. Later events for
     /// it, such as a poll that was still in flight, are ignored.
     mutating func remove(_ symbol: String) {
         entries[symbol] = nil
+    }
+
+    /// A poll for the symbol started at local time `now`.
+    mutating func pollStarted(_ symbol: String, at now: Date) {
+        guard entries[symbol] != nil else { return }
+        entries[symbol]?.lastPoll = now
+    }
+
+    /// The tracked symbols to poll at local time `now`, sorted by symbol.
+    ///
+    /// A live symbol is skipped until `livePollInterval` has passed since its
+    /// last poll, because the stream already keeps its price fresh. `force`
+    /// (Refresh Now, wake and network recovery) returns every tracked symbol
+    /// (docs/adr/0005).
+    func symbolsToPoll(now: Date, force: Bool) -> [String] {
+        entries.filter { _, entry in
+            guard !force, entry.isLive(at: now), let lastPoll = entry.lastPoll else { return true }
+            return now.timeIntervalSince(lastPoll) >= TickerState.livePollInterval
+        }.keys.sorted()
     }
 
     /// A poll for the quote's symbol succeeded at local time `now`.
