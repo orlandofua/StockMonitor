@@ -210,3 +210,4 @@ Your symbols and settings are kept.
 ## Architecture
 
 Design decisions are recorded as ADRs in [`docs/adr`](docs/adr/README.md).
+Domain terms (ticker state, live, stale, tick, poll, baseline, comparison period) are defined in [`GLOSSARY.md`](GLOSSARY.md).
