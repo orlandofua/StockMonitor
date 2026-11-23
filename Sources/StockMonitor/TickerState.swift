@@ -27,6 +27,30 @@ struct TickerState {
         let noQuoteLine: String?
         /// The menu's status line: "● Live (streaming)" or "Polling every <interval>".
         let statusLine: String
+        /// The ticker's change badge, or `nil` when there is no quote.
+        let badge: Badge?
+        /// The menu's change and baseline lines for the symbol's comparison
+        /// period (docs/adr/0014). Empty when there is no quote.
+        let comparisonLines: [String]
+    }
+
+    /// The change badge on a ticker (docs/adr/0006, docs/adr/0014).
+    struct Badge: Equatable {
+        /// The point or percent change, as the "show percent" setting picks.
+        let text: String
+        let change: Double
+        let percent: Double
+        /// Green when the change is zero or more, red below zero.
+        let isUp: Bool
+        /// The outlined period pill, such as "1W", or `nil` to hide it.
+        let periodLabel: String?
+    }
+
+    /// A history request to run for a symbol's comparison baseline.
+    struct BaselineFetch: Equatable {
+        let symbol: String
+        /// Never 1D, so `period.historyRange` is always set.
+        let period: ComparePeriod
     }
 
     /// A symbol is live while its last tick arrived less than this long ago (docs/adr/0005).
@@ -61,6 +85,9 @@ struct TickerState {
     }
 
     private var entries: [String: Entry] = [:]
+    /// Baselines for periods other than 1D, fetched once per symbol, period and
+    /// exchange day (docs/adr/0014).
+    private var baselines = BaselineCache()
 
     init(symbols: [String]) {
         for symbol in symbols { entries[symbol] = Entry() }
@@ -77,6 +104,7 @@ struct TickerState {
     /// it, such as a poll that was still in flight, are ignored.
     mutating func remove(_ symbol: String) {
         entries[symbol] = nil
+        baselines.remove(symbol)
     }
 
     /// A poll for the symbol started at local time `now`.
@@ -126,15 +154,47 @@ struct TickerState {
         entries[tick.symbol]?.lastTickTime = tick.time
     }
 
+    /// The history requests to run at `now` for the tracked symbols in
+    /// `periods`, which maps a symbol to its comparison period. Sorted by symbol.
+    ///
+    /// The returned requests count as started: they are not returned again
+    /// while in flight, nor after they finish on the same exchange day. 1D never
+    /// needs a request, and passing 1D for a symbol drops its request in flight,
+    /// so a late reply is ignored (docs/adr/0014).
+    mutating func baselinesToFetch(now: Date, periods: [String: ComparePeriod]) -> [BaselineFetch] {
+        periods.keys.sorted().compactMap { symbol in
+            guard entries[symbol] != nil, let period = periods[symbol],
+                  baselines.beginFetch(symbol, period: period, now: now) else { return nil }
+            return BaselineFetch(symbol: symbol, period: period)
+        }
+    }
+
+    /// A history request finished at `now`. Ignored when the symbol is no longer
+    /// tracked or has since switched to another period.
+    mutating func baselineFetched(_ symbol: String, period: ComparePeriod, history: PriceHistory, at now: Date) {
+        guard entries[symbol] != nil else { return }
+        baselines.finish(symbol, period: period, history: history, now: now)
+    }
+
+    /// A history request failed, so the next call to `baselinesToFetch` tries
+    /// again. Ignored when the symbol is no longer tracked or has since switched
+    /// to another period.
+    mutating func baselineFetchFailed(_ symbol: String, period: ComparePeriod, reason: String) {
+        guard entries[symbol] != nil else { return }
+        baselines.fail(symbol, period: period, message: reason)
+    }
+
     /// What the symbol's ticker and menu show at local time `now`.
     ///
     /// - Parameters:
     ///   - pollInterval: the user's refresh interval, which sets the stale threshold.
     ///   - pollIntervalLabel: names that interval, such as "1 minute".
+    ///   - period: the symbol's comparison period, which picks the badge's baseline.
+    ///   - showPercent: whether the badge shows the percent change instead of the point change.
     ///   - formatTime: formats the times in the freshness lines. Injected so
     ///     tests do not depend on the locale or time zone.
     func view(_ symbol: String, now: Date, pollInterval: TimeInterval, pollIntervalLabel: String,
-              locale: Locale = .current,
+              period: ComparePeriod, showPercent: Bool, locale: Locale = .current,
               formatTime: (Date) -> String = { $0.formatted(date: .omitted, time: .standard) }) -> View? {
         guard let entry = entries[symbol] else { return nil }
         let priceText = entry.quote.map { Formatting.price($0.price, locale: locale) }
@@ -150,10 +210,22 @@ struct TickerState {
         let noQuoteLine = entry.quote == nil
             ? entry.lastError.map { "\(symbol): failed to load (\($0))" } ?? "\(symbol): loading…"
             : nil
+        let baselineState = baselines.state(for: symbol, period: period)
+        let badge = entry.quote.map { quote in
+            let values = Comparison.badge(quote: quote, state: baselineState)
+            return Badge(text: showPercent ? Formatting.percent(values.percent)
+                                           : Formatting.change(values.change, locale: locale),
+                         change: values.change, percent: values.percent, isUp: values.change >= 0,
+                         periodLabel: values.periodLabel)
+        }
+        let comparisonLines = entry.quote.map {
+            Comparison.menuLines(quote: $0, period: period, state: baselineState, locale: locale)
+        } ?? []
         return View(priceText: priceText, quote: entry.quote, lastUpdate: entry.lastUpdate,
                     lastError: entry.lastError, isLive: isLive, isStale: isStale,
                     tooltipLines: tooltipLines, freshnessLines: freshnessLines, noQuoteLine: noQuoteLine,
-                    statusLine: isLive ? "● Live (streaming)" : "Polling every \(pollIntervalLabel)")
+                    statusLine: isLive ? "● Live (streaming)" : "Polling every \(pollIntervalLabel)",
+                    badge: badge, comparisonLines: comparisonLines)
     }
 
     /// When the menu bar should next redraw so a ticker turns gray right at its

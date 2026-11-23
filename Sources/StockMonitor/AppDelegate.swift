@@ -10,12 +10,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private let defaults = UserDefaults.standard
     private var items: [String: NSStatusItem] = [:]
-    /// Each tracked symbol's quote, last error and last good-data time (issue #42).
+    /// Each tracked symbol's quote, last error, last good-data time and
+    /// comparison baseline (issue #42).
     private lazy var tickers = TickerState(symbols: symbols)
     /// Each symbol's comparison period (issue #16, docs/adr/0014).
     private lazy var periods = ComparePeriodStore(defaults: defaults)
-    /// Baselines for periods other than 1D, fetched once per symbol, period and day.
-    private var baselines = BaselineCache()
     private var timer: Timer?
     /// One-shot timer that redraws tickers when the next quote crosses the stale
     /// threshold, so the menu bar does not wait for the poll timer. Never polls.
@@ -92,7 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
             tickers.remove(sym)
-            baselines.remove(sym)
         }
         stream.setSymbols(wanted)
         // Create in reverse so the first symbol ends up leftmost.
@@ -109,11 +107,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func render(_ sym: String) {
         guard let button = items[sym]?.button, let view = tickerView(sym) else { return }
-        let badge = view.quote.map { Comparison.badge(quote: $0, state: baselineState(sym)) }
-        let change = badge.map { showPercent ? Formatting.percent($0.percent) : Formatting.change($0.change) }
-        button.image = TickerImage.make(symbol: sym, price: view.priceText, change: change,
-                                        isUp: (badge?.change ?? 0) >= 0, isStale: view.isStale,
-                                        period: badge?.periodLabel)
+        button.image = TickerImage.make(symbol: sym, price: view.priceText, change: view.badge?.text,
+                                        isUp: view.badge?.isUp ?? true, isStale: view.isStale,
+                                        period: view.badge?.periodLabel)
         button.toolTip = view.tooltipLines.joined(separator: "\n")
     }
 
@@ -149,27 +145,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// What the symbol's ticker and menu show now.
     private func tickerView(_ sym: String) -> TickerState.View? {
-        tickers.view(sym, now: Date(), pollInterval: interval, pollIntervalLabel: intervalLabel(interval))
+        tickers.view(sym, now: Date(), pollInterval: interval, pollIntervalLabel: intervalLabel(interval),
+                     period: periods.period(for: sym), showPercent: showPercent)
     }
 
-    private func baselineState(_ sym: String) -> BaselineState {
-        baselines.state(for: sym, period: periods.period(for: sym))
-    }
-
-    /// Fetches the symbol's history if its baseline is missing or from an earlier
-    /// day. At most one request per symbol and period is in flight.
-    private func loadBaselineIfNeeded(_ sym: String) {
-        let period = periods.period(for: sym)
-        // beginFetch runs first, so a switch to 1D drops a request still in flight.
-        guard baselines.beginFetch(sym, period: period, now: Date()), let range = period.historyRange else { return }
-        Task { @MainActor in
-            do {
-                let history = try await QuoteService.fetchHistory(sym, range: range)
-                guard baselines.finish(sym, period: period, history: history, now: Date()) else { return }
-            } catch {
-                guard baselines.fail(sym, period: period, message: Staleness.errorSummary(error)) else { return }
+    /// Runs the history requests ticker state asks for, for the given symbols
+    /// at their stored comparison periods, and reports the results back.
+    private func loadBaselines(for syms: [String]) {
+        let wanted = Dictionary(syms.map { ($0, periods.period(for: $0)) }, uniquingKeysWith: { first, _ in first })
+        for fetch in tickers.baselinesToFetch(now: Date(), periods: wanted) {
+            guard let range = fetch.period.historyRange else { continue }
+            Task { @MainActor in
+                do {
+                    let history = try await QuoteService.fetchHistory(fetch.symbol, range: range)
+                    tickers.baselineFetched(fetch.symbol, period: fetch.period, history: history, at: Date())
+                } catch {
+                    tickers.baselineFetchFailed(fetch.symbol, period: fetch.period,
+                                                reason: Staleness.errorSummary(error))
+                }
+                render(fetch.symbol)
             }
-            render(sym)
         }
     }
 
@@ -183,7 +178,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let now = Date()
         // Re-check staleness on every tick, so a quote turns gray even if its poll hangs.
         symbols.forEach(render)
-        symbols.forEach(loadBaselineIfNeeded)
+        loadBaselines(for: symbols)
         for sym in tickers.symbolsToPoll(now: now, force: force) {
             tickers.pollStarted(sym, at: now)
             Task { @MainActor in
@@ -218,8 +213,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let q = view?.quote {
             menu.addItem(disabled(q.name, bold: true))
             menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
-            Comparison.menuLines(quote: q, period: periods.period(for: sym), state: baselineState(sym))
-                .forEach { menu.addItem(disabled($0)) }
+            view?.comparisonLines.forEach { menu.addItem(disabled($0)) }
             view?.freshnessLines.forEach { menu.addItem(disabled($0)) }
         } else if let noQuoteLine = view?.noQuoteLine {
             menu.addItem(disabled(noQuoteLine))
@@ -336,9 +330,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let period = ComparePeriod(rawValue: pair[1]) else { return }
         let sym = pair[0]
         periods.set(period, for: sym)
-        // Redraw now (1D, or a cached baseline, shows right away), then fetch history if needed.
+        // Redraw now (1D, or a cached baseline, shows right away), then fetch
+        // history if needed. Switching to 1D drops a request still in flight.
         render(sym)
-        loadBaselineIfNeeded(sym)
+        loadBaselines(for: [sym])
     }
 
     @objc private func togglePercent() {
