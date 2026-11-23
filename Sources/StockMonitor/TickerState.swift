@@ -13,6 +13,18 @@ struct TickerState {
         let lastError: String?
         /// Whether the symbol is streaming: a tick arrived less than `liveWindow` ago.
         let isLive: Bool
+        /// Whether the shown quote is too old to trust (docs/adr/0011). Never
+        /// true while live or when there is no quote.
+        let isStale: Bool
+        /// The ticker's tooltip: the name and the freshness lines, or only the
+        /// symbol when there is no quote yet.
+        let tooltipLines: [String]
+        /// The menu's freshness lines: "Updated …" or "Stale: last update …",
+        /// plus "Last error: …". Empty when there is no quote.
+        let freshnessLines: [String]
+        /// The menu line shown instead of the quote when there is none:
+        /// "<symbol>: loading…" or "<symbol>: failed to load (<reason>)".
+        let noQuoteLine: String?
         /// The menu's status line: "● Live (streaming)" or "Polling every <interval>".
         let statusLine: String
     }
@@ -90,14 +102,44 @@ struct TickerState {
     }
 
     /// What the symbol's ticker and menu show at local time `now`.
-    /// `pollIntervalLabel` names the user's refresh interval, such as "1 minute".
-    func view(_ symbol: String, now: Date, pollIntervalLabel: String, locale: Locale = .current) -> View? {
+    ///
+    /// - Parameters:
+    ///   - pollInterval: the user's refresh interval, which sets the stale threshold.
+    ///   - pollIntervalLabel: names that interval, such as "1 minute".
+    ///   - formatTime: formats the times in the freshness lines. Injected so
+    ///     tests do not depend on the locale or time zone.
+    func view(_ symbol: String, now: Date, pollInterval: TimeInterval, pollIntervalLabel: String,
+              locale: Locale = .current,
+              formatTime: (Date) -> String = { $0.formatted(date: .omitted, time: .standard) }) -> View? {
         guard let entry = entries[symbol] else { return nil }
         let priceText = entry.quote.map { Formatting.price($0.price, locale: locale) }
             ?? (entry.lastError != nil ? "err" : "…")
         let isLive = entry.isLive(at: now)
+        let isStale = entry.quote != nil
+            && Staleness.isStale(lastUpdate: entry.lastUpdate, isLive: isLive, pollInterval: pollInterval, now: now)
+        let freshnessLines = entry.quote.map {
+            Staleness.menuLines(updatedAt: $0.fetchedAt, lastUpdate: entry.lastUpdate, lastError: entry.lastError,
+                                isStale: isStale, formatTime: formatTime)
+        } ?? []
+        let tooltipLines = entry.quote.map { [$0.name] + freshnessLines } ?? [symbol]
+        let noQuoteLine = entry.quote == nil
+            ? entry.lastError.map { "\(symbol): failed to load (\($0))" } ?? "\(symbol): loading…"
+            : nil
         return View(priceText: priceText, quote: entry.quote, lastUpdate: entry.lastUpdate,
-                    lastError: entry.lastError, isLive: isLive,
+                    lastError: entry.lastError, isLive: isLive, isStale: isStale,
+                    tooltipLines: tooltipLines, freshnessLines: freshnessLines, noQuoteLine: noQuoteLine,
                     statusLine: isLive ? "● Live (streaming)" : "Polling every \(pollIntervalLabel)")
+    }
+
+    /// When the menu bar should next redraw so a ticker turns gray right at its
+    /// stale threshold, instead of at the next poll (docs/adr/0011).
+    ///
+    /// Returns the earliest moment after `now` at which a quoted symbol crosses
+    /// the threshold, plus a small margin, or `nil` when no symbol will. Live
+    /// symbols count too: a redraw while they are still live changes nothing,
+    /// and the caller then asks again with their newer update times.
+    func nextStaleRecheck(now: Date, pollInterval: TimeInterval) -> Date? {
+        let updates = entries.values.compactMap { $0.quote != nil ? $0.lastUpdate : nil }
+        return Staleness.nextRecheck(lastUpdates: updates, pollInterval: pollInterval, now: now)
     }
 }
