@@ -114,17 +114,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func render(_ sym: String) {
         guard let button = items[sym]?.button, let view = tickerView(sym) else { return }
-        let q = view.quote
-        let stale = q != nil && isStale(sym)
-        let price = view.priceText
-        let badge = q.map { Comparison.badge(quote: $0, state: baselineState(sym)) }
+        let badge = view.quote.map { Comparison.badge(quote: $0, state: baselineState(sym)) }
         let change = badge.map { showPercent ? Formatting.percent($0.percent) : Formatting.change($0.change) }
-        button.image = TickerImage.make(symbol: sym, price: price, change: change,
-                                        isUp: (badge?.change ?? 0) >= 0, isStale: stale,
+        button.image = TickerImage.make(symbol: sym, price: view.priceText, change: change,
+                                        isUp: (badge?.change ?? 0) >= 0, isStale: view.isStale,
                                         period: badge?.periodLabel)
-        button.toolTip = q.map { q in
-            ([q.name] + freshnessLines(sym, quote: q, stale: stale)).joined(separator: "\n")
-        } ?? sym
+        button.toolTip = view.tooltipLines.joined(separator: "\n")
     }
 
     // MARK: Refresh
@@ -142,10 +137,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// than needed. Update times only move forward, so firing early is harmless:
     /// the handler redraws and schedules again.
     private func scheduleStaleCheck(reset: Bool = false) {
-        let updates = symbols.compactMap { sym in
-            tickerView(sym).flatMap { $0.quote != nil ? $0.lastUpdate : nil }
-        }
-        let next = Staleness.nextRecheck(lastUpdates: updates, pollInterval: interval, now: Date())
+        let next = tickers.nextStaleRecheck(now: Date(), pollInterval: interval)
         if !reset, let current = staleTimer, current.isValid, let next, current.fireDate <= next { return }
         staleTimer?.invalidate()
         staleTimer = nil
@@ -162,20 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     /// What the symbol's ticker and menu show now.
     private func tickerView(_ sym: String, now: Date = Date()) -> TickerState.View? {
-        tickers.view(sym, now: now, pollIntervalLabel: intervalLabel(interval))
-    }
-
-    private func isStale(_ sym: String) -> Bool {
-        let view = tickerView(sym)
-        return Staleness.isStale(lastUpdate: view?.lastUpdate, isLive: view?.isLive ?? false,
-                                 pollInterval: interval, now: Date())
-    }
-
-    /// "Updated …" or "Stale: last update …", plus the last error if there is one.
-    private func freshnessLines(_ sym: String, quote: Quote, stale: Bool) -> [String] {
-        let view = tickerView(sym)
-        return Staleness.menuLines(updatedAt: quote.fetchedAt, lastUpdate: view?.lastUpdate, lastError: view?.lastError,
-                            isStale: stale) { $0.formatted(date: .omitted, time: .standard) }
+        tickers.view(sym, now: now, pollInterval: interval, pollIntervalLabel: intervalLabel(interval))
     }
 
     private func baselineState(_ sym: String) -> BaselineState {
@@ -250,9 +229,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
             Comparison.menuLines(quote: q, period: periods.period(for: sym), state: baselineState(sym))
                 .forEach { menu.addItem(disabled($0)) }
-            freshnessLines(sym, quote: q, stale: isStale(sym)).forEach { menu.addItem(disabled($0)) }
-        } else {
-            menu.addItem(disabled(view?.lastError.map { "\(sym): failed to load (\($0))" } ?? "\(sym): loading…"))
+            view?.freshnessLines.forEach { menu.addItem(disabled($0)) }
+        } else if let noQuoteLine = view?.noQuoteLine {
+            menu.addItem(disabled(noQuoteLine))
         }
         if let statusLine = view?.statusLine { menu.addItem(disabled(statusLine)) }
         menu.addItem(.separator())

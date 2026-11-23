@@ -21,9 +21,15 @@ struct TickerStateTests {
 
     static let posix = Locale(identifier: "en_US_POSIX")
 
-    /// The view at `now`, with a fixed locale and a 1-minute poll interval.
-    static func view(_ state: TickerState, _ symbol: String, at now: Date = now) -> TickerState.View? {
-        state.view(symbol, now: now, pollIntervalLabel: "1 minute", locale: posix)
+    /// Formats times as seconds since `now`, so tests do not depend on the
+    /// locale or time zone.
+    static func formatTime(_ date: Date) -> String { "T\(Int(date.timeIntervalSince(now)))" }
+
+    /// The view at `now`, with a fixed locale, time format and poll interval (1 minute by default).
+    static func view(_ state: TickerState, _ symbol: String, at now: Date = now,
+                     interval: TimeInterval = 60) -> TickerState.View? {
+        state.view(symbol, now: now, pollInterval: interval, pollIntervalLabel: "1 minute", locale: posix,
+                   formatTime: formatTime)
     }
 
     @Test func successfulPollShowsItsPrice() {
@@ -230,11 +236,170 @@ struct TickerStateTests {
 
     @Test func statusLineNamesThePollIntervalWhenNotLive() {
         var state = TickerState(symbols: ["BZ=F"])
-        #expect(state.view("BZ=F", now: Self.now, pollIntervalLabel: "30 seconds")?.statusLine
+        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "30 seconds")?.statusLine
                 == "Polling every 30 seconds")
 
         state.tickReceived(Self.tick(at: Self.ago(200)), at: Self.ago(120))
-        #expect(state.view("BZ=F", now: Self.now, pollIntervalLabel: "5 minutes")?.statusLine
+        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "5 minutes")?.statusLine
                 == "Polling every 5 minutes")
+    }
+
+    // MARK: Staleness (issue #45, docs/adr/0011)
+
+    /// Stale once the last good data is more than max(2 × interval, 5 minutes) old.
+    /// 60 s polls hit the 5-minute floor; 300 s polls double to 10 minutes.
+    @Test(arguments: [(60.0, 300.0), (300, 600)])
+    func turnsStaleAtTheThreshold(interval: TimeInterval, threshold: TimeInterval) {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(threshold)), at: Self.ago(threshold))
+        #expect(Self.view(state, "BZ=F", interval: interval)?.isStale == false)
+
+        state.pollSucceeded(Self.quote(at: Self.ago(threshold + 1)), at: Self.ago(threshold + 1))
+        #expect(Self.view(state, "BZ=F", interval: interval)?.isStale == true)
+    }
+
+    @Test func symbolWithNoQuoteIsNeverStale() {
+        var state = TickerState(symbols: ["BZ=F"])
+        #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(3600))?.isStale == false)
+        state.pollFailed("BZ=F", reason: "timeout")
+        #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(3600))?.isStale == false)
+    }
+
+    @Test func liveSymbolIsNeverStaleAndTurnsStaleAtTheThresholdOnceTheLiveWindowExpires() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.tickReceived(Self.tick(at: Self.now), at: Self.now)
+        // Live, even when the threshold is shorter than the live window.
+        #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(100), interval: 1)?.isStale == false)
+        // Not live any more, but not past the 5-minute threshold yet.
+        let notLive = Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(200))
+        #expect(notLive?.isLive == false)
+        #expect(notLive?.isStale == false)
+        #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(300))?.isStale == false)
+        #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(301))?.isStale == true)
+    }
+
+    @Test func failedPollDoesNotResetTheStaleClock() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(400)), at: Self.ago(400))
+        state.pollFailed("BZ=F", reason: "offline")
+        #expect(Self.view(state, "BZ=F")?.isStale == true)
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == nil)
+    }
+
+    @Test func successfulPollResetsTheStaleClock() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(400)), at: Self.ago(400))
+        state.pollSucceeded(Self.quote(at: Self.now), at: Self.now)
+        #expect(Self.view(state, "BZ=F")?.isStale == false)
+    }
+
+    @Test func tickResetsTheStaleClock() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(800)), at: Self.ago(800))
+        state.tickReceived(Self.tick(at: Self.ago(200)), at: Self.ago(200))
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.isLive == false)
+        #expect(view?.isStale == false)
+    }
+
+    @Test func addedSymbolIsNotStaleRightAway() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.add(Self.quote("AAPL", at: Self.ago(5)))
+        #expect(Self.view(state, "AAPL")?.isStale == false)
+    }
+
+    // MARK: Tooltip and menu lines
+
+    @Test func freshQuoteLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(10)), at: Self.ago(5))
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.freshnessLines == ["Updated T-10"])
+        #expect(view?.tooltipLines == ["Brent Crude", "Updated T-10"])
+        #expect(view?.noQuoteLine == nil)
+    }
+
+    @Test func freshQuoteWithErrorLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(70)), at: Self.ago(70))
+        state.pollFailed("BZ=F", reason: "timeout")
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.freshnessLines == ["Updated T-70", "Last error: timeout"])
+        #expect(view?.tooltipLines == ["Brent Crude", "Updated T-70", "Last error: timeout"])
+    }
+
+    @Test func staleQuoteLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(900)), at: Self.ago(840))
+        state.pollFailed("BZ=F", reason: "offline")
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.isStale == true)
+        #expect(view?.freshnessLines == ["Stale: last update T-840", "Last error: offline"])
+        #expect(view?.tooltipLines == ["Brent Crude", "Stale: last update T-840", "Last error: offline"])
+    }
+
+    @Test func staleQuoteWithoutErrorLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(900)), at: Self.ago(900))
+        #expect(Self.view(state, "BZ=F")?.freshnessLines == ["Stale: last update T-900"])
+    }
+
+    @Test func loadingSymbolLines() {
+        let state = TickerState(symbols: ["BZ=F"])
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.noQuoteLine == "BZ=F: loading…")
+        #expect(view?.freshnessLines == [])
+        #expect(view?.tooltipLines == ["BZ=F"])
+    }
+
+    @Test func failedSymbolLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollFailed("BZ=F", reason: "HTTP 503")
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.noQuoteLine == "BZ=F: failed to load (HTTP 503)")
+        #expect(view?.freshnessLines == [])
+        #expect(view?.tooltipLines == ["BZ=F"])
+    }
+
+    // MARK: Next stale recheck
+
+    @Test func noRecheckWithoutQuotes() {
+        var state = TickerState(symbols: ["BZ=F", "AAPL"])
+        state.pollFailed("BZ=F", reason: "timeout")
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == nil)
+    }
+
+    @Test func recheckIsTheEarliestThresholdCrossingAmongQuotedSymbols() {
+        var state = TickerState(symbols: ["BZ=F", "AAPL", "MSFT"])
+        state.pollSucceeded(Self.quote("BZ=F", at: Self.ago(10)), at: Self.ago(10))
+        state.pollSucceeded(Self.quote("AAPL", at: Self.ago(200)), at: Self.ago(200))
+        // MSFT has no quote, so it never turns stale.
+        state.pollFailed("MSFT", reason: "timeout")
+        // AAPL crosses the 5-minute threshold in 100 s, plus the 1 s margin.
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(101))
+    }
+
+    @Test func recheckMovesWhenTheIntervalChanges() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(200)), at: Self.ago(200))
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(101))
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 300) == Self.now.addingTimeInterval(401))
+    }
+
+    @Test func recheckDropsARemovedSymbol() {
+        var state = TickerState(symbols: ["BZ=F", "AAPL"])
+        state.pollSucceeded(Self.quote("BZ=F", at: Self.ago(10)), at: Self.ago(10))
+        state.pollSucceeded(Self.quote("AAPL", at: Self.ago(200)), at: Self.ago(200))
+        state.remove("AAPL")
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(291))
+        state.remove("BZ=F")
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == nil)
+    }
+
+    @Test func recheckFollowsTheLastGoodData() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(at: Self.ago(200)), at: Self.ago(200))
+        state.tickReceived(Self.tick(at: Self.now), at: Self.now)
+        #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(301))
     }
 }
