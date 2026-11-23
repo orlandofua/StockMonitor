@@ -25,11 +25,13 @@ struct TickerStateTests {
     /// locale or time zone.
     static func formatTime(_ date: Date) -> String { "T\(Int(date.timeIntervalSince(now)))" }
 
-    /// The view at `now`, with a fixed locale, time format and poll interval (1 minute by default).
+    /// The view at `now`, with a fixed locale, time format and poll interval
+    /// (1 minute by default), comparing to the previous close unless told otherwise.
     static func view(_ state: TickerState, _ symbol: String, at now: Date = now,
-                     interval: TimeInterval = 60) -> TickerState.View? {
-        state.view(symbol, now: now, pollInterval: interval, pollIntervalLabel: "1 minute", locale: posix,
-                   formatTime: formatTime)
+                     interval: TimeInterval = 60, period: ComparePeriod = .day,
+                     showPercent: Bool = false) -> TickerState.View? {
+        state.view(symbol, now: now, pollInterval: interval, pollIntervalLabel: "1 minute", period: period,
+                   showPercent: showPercent, locale: posix, formatTime: formatTime)
     }
 
     @Test func successfulPollShowsItsPrice() {
@@ -236,11 +238,13 @@ struct TickerStateTests {
 
     @Test func statusLineNamesThePollIntervalWhenNotLive() {
         var state = TickerState(symbols: ["BZ=F"])
-        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "30 seconds")?.statusLine
+        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "30 seconds",
+                           period: .day, showPercent: false)?.statusLine
                 == "Polling every 30 seconds")
 
         state.tickReceived(Self.tick(at: Self.ago(200)), at: Self.ago(120))
-        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "5 minutes")?.statusLine
+        #expect(state.view("BZ=F", now: Self.now, pollInterval: 60, pollIntervalLabel: "5 minutes",
+                           period: .day, showPercent: false)?.statusLine
                 == "Polling every 5 minutes")
     }
 
