@@ -10,7 +10,9 @@ struct TickerStateBaselineTests {
     static let now = ComparisonTests.ny(12, 5)
     static let posix = Locale(identifier: "en_US_POSIX")
 
-    static func history() throws -> PriceHistory { try ComparisonTests.history() }
+    static func history() throws -> PriceHistory {
+        try QuoteService.parseHistory(QuoteParsingTests.fixture("history-gaps"))
+    }
 
     /// AAPL at 130 with a previous close of 125, added at `now`.
     static func state(price: Double = 130) -> TickerState {
@@ -26,7 +28,7 @@ struct TickerStateBaselineTests {
     }
 
     static func fetch(_ period: ComparePeriod) -> TickerState.BaselineFetch {
-        TickerState.BaselineFetch(symbol: "AAPL", period: period)
+        TickerState.BaselineFetch(symbol: "AAPL", period: period, range: period.historyRange!)
     }
 
     /// The menu lines Comparison produces today, for comparing wording.
@@ -62,7 +64,7 @@ struct TickerStateBaselineTests {
     @Test func failedFetchIsRetriedOnTheNextCall() {
         var state = Self.state()
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .month])
-        state.baselineFetchFailed("AAPL", period: .month, reason: "timeout")
+        state.baselineFetchFailed("AAPL", period: .month, error: URLError(.timedOut))
         #expect(state.baselinesToFetch(now: Self.now, periods: ["AAPL": .month]) == [Self.fetch(.month)])
     }
 
@@ -70,8 +72,8 @@ struct TickerStateBaselineTests {
         var state = TickerState(symbols: ["MSFT", "AAPL", "BZ=F"])
         let fetches = state.baselinesToFetch(now: Self.now,
                                              periods: ["MSFT": .week, "AAPL": .year, "TSLA": .month])
-        #expect(fetches == [TickerState.BaselineFetch(symbol: "AAPL", period: .year),
-                            TickerState.BaselineFetch(symbol: "MSFT", period: .week)])
+        #expect(fetches == [TickerState.BaselineFetch(symbol: "AAPL", period: .year, range: "2y"),
+                            TickerState.BaselineFetch(symbol: "MSFT", period: .week, range: "1mo")])
     }
 
     @Test func switchingToOneDayMakesTheLateReplyANoOp() throws {
@@ -90,7 +92,7 @@ struct TickerStateBaselineTests {
         var state = Self.state()
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .month])
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .day])
-        state.baselineFetchFailed("AAPL", period: .month, reason: "timeout")
+        state.baselineFetchFailed("AAPL", period: .month, error: URLError(.timedOut))
         #expect(Self.view(state, period: .month)?.comparisonLines == Self.expectedLines(.month, .loading))
     }
 
@@ -112,7 +114,7 @@ struct TickerStateBaselineTests {
         var state = Self.state()
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .month])
         state.remove("AAPL")
-        state.baselineFetchFailed("AAPL", period: .month, reason: "timeout")
+        state.baselineFetchFailed("AAPL", period: .month, error: URLError(.timedOut))
         state.add(ComparisonTests.quote())
         #expect(Self.view(state, period: .month)?.comparisonLines == Self.expectedLines(.month, .loading))
     }
@@ -120,7 +122,7 @@ struct TickerStateBaselineTests {
     @Test func baselineForAnUntrackedSymbolLeavesNoState() throws {
         var state = Self.state()
         state.baselineFetched("MSFT", period: .month, history: try Self.history(), at: Self.now)
-        state.baselineFetchFailed("MSFT", period: .month, reason: "timeout")
+        state.baselineFetchFailed("MSFT", period: .month, error: URLError(.timedOut))
         #expect(Self.view(state, "MSFT", period: .month) == nil)
     }
 
@@ -147,7 +149,7 @@ struct TickerStateBaselineTests {
         #expect(Self.view(state, period: .week)?.badge?.periodLabel == nil)
         #expect(Self.view(state, period: .week)?.badge?.change == 5)
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .week])
-        state.baselineFetchFailed("AAPL", period: .week, reason: "timeout")
+        state.baselineFetchFailed("AAPL", period: .week, error: URLError(.timedOut))
         #expect(Self.view(state, period: .week)?.badge?.periodLabel == nil)
         #expect(Self.view(state, period: .week)?.badge?.change == 5)
     }
@@ -199,7 +201,7 @@ struct TickerStateBaselineTests {
     @Test func failedMenuLines() {
         var state = Self.state()
         _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .week])
-        state.baselineFetchFailed("AAPL", period: .week, reason: "offline")
+        state.baselineFetchFailed("AAPL", period: .week, error: URLError(.notConnectedToInternet))
         #expect(Self.view(state, period: .week)?.comparisonLines
                 == ["1W change unavailable (offline)", "Today +5.00 (+4.00%)", "Prev close 125.00"])
     }

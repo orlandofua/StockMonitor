@@ -1,11 +1,23 @@
 import Foundation
 
-/// Everything the app knows about each tracked symbol that decides what its
-/// ticker and menu show (issue #42).
+/// The ticker state of every tracked symbol: everything the app knows about
+/// one tracked symbol that decides what its ticker and menu show (issue #42,
+/// GLOSSARY.md).
+///
+/// The app passes in events (symbol added or removed, poll started, succeeded
+/// or failed, tick received, baseline fetched or failed), each with the current
+/// time. It then asks what each ticker shows (price, live or stale, change
+/// against the baseline for the symbol's comparison period), which symbols to
+/// poll, which baselines to fetch, and when a ticker can next turn stale (no
+/// good data for too long).
+/// Events for a symbol that is no longer tracked are ignored. The staleness,
+/// comparison and quote-merge helpers are meant to be called only from here.
 struct TickerState {
     /// What one ticker shows.
     struct View {
         let priceText: String
+        /// The current quote. The app draws from the lines below instead;
+        /// tests read it to check which price and metadata were kept.
         let quote: Quote?
         /// When good data last arrived, by the local clock (docs/adr/0011).
         let lastUpdate: Date?
@@ -13,7 +25,7 @@ struct TickerState {
         let lastError: String?
         /// Whether the symbol is streaming: a tick arrived less than `liveWindow` ago.
         let isLive: Bool
-        /// Whether the shown quote is too old to trust (docs/adr/0011). Never
+        /// Whether no good data has arrived for the stale threshold (docs/adr/0011). Never
         /// true while live or when there is no quote.
         let isStale: Bool
         /// The ticker's tooltip: the name and the freshness lines, or only the
@@ -25,6 +37,12 @@ struct TickerState {
         /// The menu line shown instead of the quote when there is none:
         /// "<symbol>: loading…" or "<symbol>: failed to load (<reason>)".
         let noQuoteLine: String?
+        /// The menu's bold title: the symbol's name, or `nil` when there is no quote.
+        let menuTitle: String?
+        /// The menu's quote section below the title: the price and currency,
+        /// the comparison lines and the freshness lines; or only `noQuoteLine`
+        /// when there is no quote.
+        let menuLines: [String]
         /// The menu's status line: "● Live (streaming)" or "Polling every <interval>".
         let statusLine: String
         /// The ticker's change badge, or `nil` when there is no quote.
@@ -49,8 +67,10 @@ struct TickerState {
     /// A history request to run for a symbol's comparison baseline.
     struct BaselineFetch: Equatable {
         let symbol: String
-        /// Never 1D, so `period.historyRange` is always set.
+        /// Never 1D, which needs no history.
         let period: ComparePeriod
+        /// The chart `range` to request: `period.historyRange`.
+        let range: String
     }
 
     /// A symbol is live while its last tick arrived less than this long ago (docs/adr/0005).
@@ -137,10 +157,11 @@ struct TickerState {
         entries[quote.symbol]?.store(merged ?? quote, at: now)
     }
 
-    /// A poll failed. The last good quote, if any, stays on show.
-    mutating func pollFailed(_ symbol: String, reason: String) {
+    /// A poll failed with `error`, recorded as its short summary such as
+    /// "timeout". The last good quote, if any, stays on show.
+    mutating func pollFailed(_ symbol: String, error: Error) {
         guard entries[symbol] != nil else { return }
-        entries[symbol]?.lastError = reason
+        entries[symbol]?.lastError = Staleness.errorSummary(error)
     }
 
     /// A stream tick arrived at local time `now`. It builds on the previous quote.
@@ -163,9 +184,14 @@ struct TickerState {
     /// so a late reply is ignored (docs/adr/0014).
     mutating func baselinesToFetch(now: Date, periods: [String: ComparePeriod]) -> [BaselineFetch] {
         periods.keys.sorted().compactMap { symbol in
-            guard entries[symbol] != nil, let period = periods[symbol],
-                  baselines.beginFetch(symbol, period: period, now: now) else { return nil }
-            return BaselineFetch(symbol: symbol, period: period)
+            guard entries[symbol] != nil, let period = periods[symbol] else { return nil }
+            guard let range = period.historyRange else {
+                // 1D: never starts a request, but drops the one in flight.
+                _ = baselines.beginFetch(symbol, period: period, now: now)
+                return nil
+            }
+            guard baselines.beginFetch(symbol, period: period, now: now) else { return nil }
+            return BaselineFetch(symbol: symbol, period: period, range: range)
         }
     }
 
@@ -176,12 +202,12 @@ struct TickerState {
         baselines.finish(symbol, period: period, history: history, now: now)
     }
 
-    /// A history request failed, so the next call to `baselinesToFetch` tries
-    /// again. Ignored when the symbol is no longer tracked or has since switched
-    /// to another period.
-    mutating func baselineFetchFailed(_ symbol: String, period: ComparePeriod, reason: String) {
+    /// A history request failed with `error`, recorded as its short summary,
+    /// so the next call to `baselinesToFetch` tries again. Ignored when the
+    /// symbol is no longer tracked or has since switched to another period.
+    mutating func baselineFetchFailed(_ symbol: String, period: ComparePeriod, error: Error) {
         guard entries[symbol] != nil else { return }
-        baselines.fail(symbol, period: period, message: reason)
+        baselines.fail(symbol, period: period, message: Staleness.errorSummary(error))
     }
 
     /// What the symbol's ticker and menu show at local time `now`.
@@ -221,9 +247,14 @@ struct TickerState {
         let comparisonLines = entry.quote.map {
             Comparison.menuLines(quote: $0, period: period, state: baselineState, locale: locale)
         } ?? []
+        let menuLines = entry.quote.map { quote in
+            ["\(Formatting.price(quote.price, locale: locale)) \(quote.currency ?? "")"]
+                + comparisonLines + freshnessLines
+        } ?? noQuoteLine.map { [$0] } ?? []
         return View(priceText: priceText, quote: entry.quote, lastUpdate: entry.lastUpdate,
                     lastError: entry.lastError, isLive: isLive, isStale: isStale,
                     tooltipLines: tooltipLines, freshnessLines: freshnessLines, noQuoteLine: noQuoteLine,
+                    menuTitle: entry.quote?.name, menuLines: menuLines,
                     statusLine: isLive ? "● Live (streaming)" : "Polling every \(pollIntervalLabel)",
                     badge: badge, comparisonLines: comparisonLines)
     }

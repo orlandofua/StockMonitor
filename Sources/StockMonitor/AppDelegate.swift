@@ -9,9 +9,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private let defaults = UserDefaults.standard
+    /// The only per-symbol state kept here: what is drawn in the menu bar (docs/adr/0004).
     private var items: [String: NSStatusItem] = [:]
-    /// Each tracked symbol's quote, last error, last good-data time and
-    /// comparison baseline (issue #42).
+    /// The ticker state of every tracked symbol, and the rules that act on it
+    /// (issue #42, GLOSSARY.md).
     private lazy var tickers = TickerState(symbols: symbols)
     /// Each symbol's comparison period (issue #16, docs/adr/0014).
     private lazy var periods = ComparePeriodStore(defaults: defaults)
@@ -90,7 +91,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         for (sym, item) in items where !wanted.contains(sym) {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
-            tickers.remove(sym)
         }
         stream.setSymbols(wanted)
         // Create in reverse so the first symbol ends up leftmost.
@@ -154,14 +154,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func loadBaselines(for syms: [String]) {
         let wanted = Dictionary(syms.map { ($0, periods.period(for: $0)) }, uniquingKeysWith: { first, _ in first })
         for fetch in tickers.baselinesToFetch(now: Date(), periods: wanted) {
-            guard let range = fetch.period.historyRange else { continue }
             Task { @MainActor in
                 do {
-                    let history = try await QuoteService.fetchHistory(fetch.symbol, range: range)
+                    let history = try await QuoteService.fetchHistory(fetch.symbol, range: fetch.range)
                     tickers.baselineFetched(fetch.symbol, period: fetch.period, history: history, at: Date())
                 } catch {
-                    tickers.baselineFetchFailed(fetch.symbol, period: fetch.period,
-                                                reason: Staleness.errorSummary(error))
+                    tickers.baselineFetchFailed(fetch.symbol, period: fetch.period, error: error)
                 }
                 render(fetch.symbol)
             }
@@ -189,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 } catch {
                     // Record the failure even when an older quote is still shown,
                     // so the menu can say why the price stopped updating.
-                    tickers.pollFailed(sym, reason: Staleness.errorSummary(error))
+                    tickers.pollFailed(sym, error: error)
                 }
                 render(sym)
             }
@@ -209,16 +207,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.removeAllItems()
         guard let sym = items.first(where: { $0.value.menu === menu })?.key else { return }
 
-        let view = tickerView(sym)
-        if let q = view?.quote {
-            menu.addItem(disabled(q.name, bold: true))
-            menu.addItem(disabled("\(Formatting.price(q.price)) \(q.currency ?? "")"))
-            view?.comparisonLines.forEach { menu.addItem(disabled($0)) }
-            view?.freshnessLines.forEach { menu.addItem(disabled($0)) }
-        } else if let noQuoteLine = view?.noQuoteLine {
-            menu.addItem(disabled(noQuoteLine))
+        if let view = tickerView(sym) {
+            if let title = view.menuTitle { menu.addItem(disabled(title, bold: true)) }
+            view.menuLines.forEach { menu.addItem(disabled($0)) }
+            menu.addItem(disabled(view.statusLine))
         }
-        if let statusLine = view?.statusLine { menu.addItem(disabled(statusLine)) }
         menu.addItem(.separator())
 
         menu.addItem(action("Refresh Now", #selector(refreshNow), key: "r"))
@@ -314,12 +307,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSApp.activate(ignoringOtherApps: true)
             guard alert.runModal() == .alertFirstButtonReturn else { return }
             periods.remove(sym)
+            tickers.remove(sym)
             symbols = []
             NSApp.terminate(nil)
             return
         }
         symbols.removeAll { $0 == sym }
         periods.remove(sym)
+        tickers.remove(sym)
         syncStatusItems()
         // Drop a check that was only waiting for the removed symbol.
         scheduleStaleCheck(reset: true)
