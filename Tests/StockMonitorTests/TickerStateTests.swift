@@ -272,7 +272,8 @@ struct TickerStateTests {
     @Test func liveSymbolIsNeverStaleAndTurnsStaleAtTheThresholdOnceTheLiveWindowExpires() {
         var state = TickerState(symbols: ["BZ=F"])
         state.tickReceived(Self.tick(at: Self.now), at: Self.now)
-        // Live, even when the threshold is shorter than the live window.
+        // Live, so never stale. (The 5-minute floor keeps the threshold longer
+        // than the 120 s live window, so the interval here does not matter.)
         #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(100), interval: 1)?.isStale == false)
         // Not live any more, but not past the 5-minute threshold yet.
         let notLive = Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(200))
@@ -363,6 +364,29 @@ struct TickerStateTests {
         #expect(view?.noQuoteLine == "BZ=F: failed to load (HTTP 503)")
         #expect(view?.freshnessLines == [])
         #expect(view?.tooltipLines == ["BZ=F"])
+    }
+
+    @Test func menuShowsNameThenPriceThenComparisonAndFreshnessLines() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollSucceeded(Self.quote(price: 92.16, at: Self.ago(10)), at: Self.ago(5))
+        let view = Self.view(state, "BZ=F")
+        #expect(view?.menuTitle == "Brent Crude")
+        #expect(view?.menuLines == ["92.16 USD"] + (view?.comparisonLines ?? []) + ["Updated T-10"])
+        #expect(view?.comparisonLines.isEmpty == false)
+    }
+
+    @Test func menuShowsOnlyTheNoQuoteLineWithoutAQuote() {
+        var state = TickerState(symbols: ["BZ=F"])
+        #expect(Self.view(state, "BZ=F")?.menuTitle == nil)
+        #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: loading…"])
+        state.pollFailed("BZ=F", reason: "HTTP 503")
+        #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: failed to load (HTTP 503)"])
+    }
+
+    @Test func pollFailureFromAnErrorRecordsItsShortSummary() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollFailed("BZ=F", error: URLError(.timedOut))
+        #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: failed to load (timeout)"])
     }
 
     // MARK: Next stale recheck
@@ -489,5 +513,68 @@ struct TickerStateTests {
         state.add(Self.quote(at: Self.ago(5)))
         state.tickReceived(Self.tick(at: Self.ago(2)), at: Self.ago(1))
         #expect(state.symbolsToPoll(now: Self.now, force: false) == [])
+    }
+
+    // MARK: Full sequence (issue #48)
+
+    /// Add, tick, poll while live, live expires, turns stale, remove, then a
+    /// late poll reply that is ignored. Polls every minute, so the stale
+    /// threshold is the 5-minute floor.
+    @Test func fullSequenceFromAddToALatePollReplyAfterRemoval() {
+        let t0 = Self.now
+        func at(_ seconds: TimeInterval) -> Date { t0.addingTimeInterval(seconds) }
+        func apple(price: Double, at time: Date) -> Quote {
+            Quote(symbol: "AAPL", name: "Apple Inc.", price: price, previousClose: 228, currency: "USD",
+                  fetchedAt: time)
+        }
+        var state = TickerState(symbols: ["BZ=F"])
+
+        // Added with the quote from its check: shown at once, counts as just polled.
+        state.add(apple(price: 230, at: t0))
+        #expect(Self.view(state, "AAPL", at: t0)?.priceText == "230.00")
+        #expect(state.symbolsToPoll(now: at(1), force: false) == ["AAPL", "BZ=F"])
+
+        // A tick makes it live, so the regular poll skips it.
+        state.tickReceived(Self.tick("AAPL", price: 231, at: at(9)), at: at(10))
+        #expect(Self.view(state, "AAPL", at: at(10))?.isLive == true)
+        #expect(state.symbolsToPoll(now: at(20), force: false) == ["BZ=F"])
+
+        // A forced poll while live keeps the streamed price and takes the metadata.
+        #expect(state.symbolsToPoll(now: at(30), force: true) == ["AAPL", "BZ=F"])
+        state.pollStarted("AAPL", at: at(30))
+        state.pollSucceeded(apple(price: 229, at: at(31)), at: at(31))
+        let live = Self.view(state, "AAPL", at: at(31))
+        #expect(live?.priceText == "231.00")
+        #expect(live?.menuTitle == "Apple Inc.")
+        #expect(live?.statusLine == "● Live (streaming)")
+
+        // The live window ends 120 s after the tick; not stale yet.
+        #expect(Self.view(state, "AAPL", at: at(129))?.isLive == true)
+        let polling = Self.view(state, "AAPL", at: at(130))
+        #expect(polling?.isLive == false)
+        #expect(polling?.isStale == false)
+        #expect(polling?.statusLine == "Polling every 1 minute")
+
+        // Turns stale 5 minutes after the last good data (the poll at 31 s),
+        // and the recheck is scheduled for that moment.
+        let recheck = state.nextStaleRecheck(now: at(130), pollInterval: 60)
+        #expect(recheck.map { $0 >= at(331) && $0 < at(340) } == true)
+        #expect(Self.view(state, "AAPL", at: at(331))?.isStale == false)
+        let stale = Self.view(state, "AAPL", at: at(332))
+        #expect(stale?.isStale == true)
+        #expect(stale?.priceText == "231.00")
+        #expect(stale?.freshnessLines.first?.hasPrefix("Stale: last update") == true)
+
+        // Removed while a poll is in flight.
+        state.pollStarted("AAPL", at: at(335))
+        state.remove("AAPL")
+        #expect(Self.view(state, "AAPL", at: at(340)) == nil)
+
+        // The late reply, success or failure, leaves no state behind.
+        state.pollSucceeded(apple(price: 240, at: at(345)), at: at(345))
+        state.pollFailed("AAPL", reason: "timeout")
+        #expect(Self.view(state, "AAPL", at: at(345)) == nil)
+        #expect(state.symbolsToPoll(now: at(345), force: true) == ["BZ=F"])
+        #expect(state.nextStaleRecheck(now: at(345), pollInterval: 60) == nil)
     }
 }

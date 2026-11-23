@@ -10,7 +10,9 @@ struct TickerStateBaselineTests {
     static let now = ComparisonTests.ny(12, 5)
     static let posix = Locale(identifier: "en_US_POSIX")
 
-    static func history() throws -> PriceHistory { try ComparisonTests.history() }
+    static func history() throws -> PriceHistory {
+        try QuoteService.parseHistory(QuoteParsingTests.fixture("history-gaps"))
+    }
 
     /// AAPL at 130 with a previous close of 125, added at `now`.
     static func state(price: Double = 130) -> TickerState {
@@ -26,7 +28,7 @@ struct TickerStateBaselineTests {
     }
 
     static func fetch(_ period: ComparePeriod) -> TickerState.BaselineFetch {
-        TickerState.BaselineFetch(symbol: "AAPL", period: period)
+        TickerState.BaselineFetch(symbol: "AAPL", period: period, range: period.historyRange!)
     }
 
     /// The menu lines Comparison produces today, for comparing wording.
@@ -70,8 +72,16 @@ struct TickerStateBaselineTests {
         var state = TickerState(symbols: ["MSFT", "AAPL", "BZ=F"])
         let fetches = state.baselinesToFetch(now: Self.now,
                                              periods: ["MSFT": .week, "AAPL": .year, "TSLA": .month])
-        #expect(fetches == [TickerState.BaselineFetch(symbol: "AAPL", period: .year),
-                            TickerState.BaselineFetch(symbol: "MSFT", period: .week)])
+        #expect(fetches == [TickerState.BaselineFetch(symbol: "AAPL", period: .year, range: "2y"),
+                            TickerState.BaselineFetch(symbol: "MSFT", period: .week, range: "1mo")])
+    }
+
+    @Test func failureFromAnErrorShowsItsShortSummary() {
+        var state = Self.state()
+        _ = state.baselinesToFetch(now: Self.now, periods: ["AAPL": .month])
+        state.baselineFetchFailed("AAPL", period: .month, error: URLError(.timedOut))
+        #expect(Self.view(state, period: .month)?.comparisonLines
+                == Self.expectedLines(.month, .failed("timeout")))
     }
 
     @Test func switchingToOneDayMakesTheLateReplyANoOp() throws {
