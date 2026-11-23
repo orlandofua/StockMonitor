@@ -8,9 +8,10 @@ import Foundation
 /// or failed, tick received, baseline fetched or failed), each with the current
 /// time. It then asks what each ticker shows (price, live or stale, change
 /// against the baseline for the symbol's comparison period), which symbols to
-/// poll, which baselines to fetch, and when a ticker can next turn stale.
-/// Events for a symbol that is no longer tracked are ignored. This is the only
-/// caller of the staleness, comparison and quote-merge helpers.
+/// poll, which baselines to fetch, and when a ticker can next turn stale (no
+/// good data for too long).
+/// Events for a symbol that is no longer tracked are ignored. The staleness,
+/// comparison and quote-merge helpers are meant to be called only from here.
 struct TickerState {
     /// What one ticker shows.
     struct View {
@@ -24,7 +25,7 @@ struct TickerState {
         let lastError: String?
         /// Whether the symbol is streaming: a tick arrived less than `liveWindow` ago.
         let isLive: Bool
-        /// Whether the shown quote is too old to trust (docs/adr/0011). Never
+        /// Whether no good data has arrived for the stale threshold (docs/adr/0011). Never
         /// true while live or when there is no quote.
         let isStale: Bool
         /// The ticker's tooltip: the name and the freshness lines, or only the
@@ -156,16 +157,11 @@ struct TickerState {
         entries[quote.symbol]?.store(merged ?? quote, at: now)
     }
 
-    /// A poll failed with a short reason such as "timeout". The last good
-    /// quote, if any, stays on show.
-    mutating func pollFailed(_ symbol: String, reason: String) {
-        guard entries[symbol] != nil else { return }
-        entries[symbol]?.lastError = reason
-    }
-
-    /// A poll failed with `error`, recorded as its short summary.
+    /// A poll failed with `error`, recorded as its short summary such as
+    /// "timeout". The last good quote, if any, stays on show.
     mutating func pollFailed(_ symbol: String, error: Error) {
-        pollFailed(symbol, reason: Staleness.errorSummary(error))
+        guard entries[symbol] != nil else { return }
+        entries[symbol]?.lastError = Staleness.errorSummary(error)
     }
 
     /// A stream tick arrived at local time `now`. It builds on the previous quote.
@@ -206,17 +202,12 @@ struct TickerState {
         baselines.finish(symbol, period: period, history: history, now: now)
     }
 
-    /// A history request failed, so the next call to `baselinesToFetch` tries
-    /// again. Ignored when the symbol is no longer tracked or has since switched
-    /// to another period.
-    mutating func baselineFetchFailed(_ symbol: String, period: ComparePeriod, reason: String) {
-        guard entries[symbol] != nil else { return }
-        baselines.fail(symbol, period: period, message: reason)
-    }
-
-    /// A history request failed with `error`, recorded as its short summary.
+    /// A history request failed with `error`, recorded as its short summary,
+    /// so the next call to `baselinesToFetch` tries again. Ignored when the
+    /// symbol is no longer tracked or has since switched to another period.
     mutating func baselineFetchFailed(_ symbol: String, period: ComparePeriod, error: Error) {
-        baselineFetchFailed(symbol, period: period, reason: Staleness.errorSummary(error))
+        guard entries[symbol] != nil else { return }
+        baselines.fail(symbol, period: period, message: Staleness.errorSummary(error))
     }
 
     /// What the symbol's ticker and menu show at local time `now`.

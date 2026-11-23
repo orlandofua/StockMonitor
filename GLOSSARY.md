@@ -9,8 +9,8 @@ A Yahoo Finance instrument the user tracks, such as `AAPL`, `BZ=F` or `BTC-USD`.
 _Avoid_: Stock, instrument
 
 **Ticker**:
-The menu bar item for one symbol: its price, change badge and menu.
-_Avoid_: Status item, widget
+The menu bar item for one symbol: its price, change badge and menu. In code and ADR 0004, "status item" means the AppKit `NSStatusItem` that draws a ticker; use "ticker" for the domain concept.
+_Avoid_: Widget, "status item" for the domain concept
 
 **Ticker state**:
 Everything the app knows about one tracked symbol that decides what its ticker and menu show: its quote, last error, freshness, whether it is live, and its baseline.
@@ -29,7 +29,7 @@ A symbol whose last tick arrived less than two minutes ago. A live symbol's pric
 _Avoid_: Streaming, connected
 
 **Stale**:
-A ticker whose shown price is older than max(2 × refresh interval, 5 minutes) and that is not live. A stale ticker is drawn gray.
+A ticker whose symbol is not live and has had no good data (a successful poll or a tick) for max(2 × refresh interval, 5 minutes). A stale ticker is drawn gray.
 _Avoid_: Old, expired, outdated
 
 **Comparison period**:

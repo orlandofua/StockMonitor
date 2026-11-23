@@ -314,10 +314,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
         symbols.removeAll { $0 == sym }
         periods.remove(sym)
-        // The one cleanup call: ticker state forgets the symbol, and later
-        // events for it, such as a poll still in flight, are ignored.
         tickers.remove(sym)
-        // Removes the symbol's status item.
         syncStatusItems()
         // Drop a check that was only waiting for the removed symbol.
         scheduleStaleCheck(reset: true)

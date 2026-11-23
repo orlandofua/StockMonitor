@@ -45,7 +45,7 @@ struct TickerStateTests {
 
     @Test func failedPollWithNoQuoteShowsErr() {
         var state = TickerState(symbols: ["BZ=F"])
-        state.pollFailed("BZ=F", reason: "timeout")
+        state.pollFailed("BZ=F", error: URLError(.timedOut))
         let view = Self.view(state, "BZ=F")
         #expect(view?.priceText == "err")
         #expect(view?.lastError == "timeout")
@@ -54,7 +54,7 @@ struct TickerStateTests {
     @Test func failedPollKeepsLastGoodQuoteAndNextGoodDataClearsError() {
         var state = TickerState(symbols: ["BZ=F"])
         state.pollSucceeded(Self.quote(price: 92.16), at: Self.ago(60))
-        state.pollFailed("BZ=F", reason: "offline")
+        state.pollFailed("BZ=F", error: URLError(.notConnectedToInternet))
 
         var view = Self.view(state, "BZ=F")
         #expect(view?.priceText == "92.16")
@@ -92,7 +92,7 @@ struct TickerStateTests {
         var state = TickerState(symbols: ["BZ=F", "AAPL"])
         state.remove("AAPL")
         state.pollSucceeded(Self.quote("AAPL", price: 230), at: Self.now)
-        state.pollFailed("AAPL", reason: "timeout")
+        state.pollFailed("AAPL", error: URLError(.timedOut))
         #expect(Self.view(state, "AAPL") == nil)
 
         // Adding it again starts clean, from the new check's quote only.
@@ -265,7 +265,7 @@ struct TickerStateTests {
     @Test func symbolWithNoQuoteIsNeverStale() {
         var state = TickerState(symbols: ["BZ=F"])
         #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(3600))?.isStale == false)
-        state.pollFailed("BZ=F", reason: "timeout")
+        state.pollFailed("BZ=F", error: URLError(.timedOut))
         #expect(Self.view(state, "BZ=F", at: Self.now.addingTimeInterval(3600))?.isStale == false)
     }
 
@@ -286,7 +286,7 @@ struct TickerStateTests {
     @Test func failedPollDoesNotResetTheStaleClock() {
         var state = TickerState(symbols: ["BZ=F"])
         state.pollSucceeded(Self.quote(at: Self.ago(400)), at: Self.ago(400))
-        state.pollFailed("BZ=F", reason: "offline")
+        state.pollFailed("BZ=F", error: URLError(.notConnectedToInternet))
         #expect(Self.view(state, "BZ=F")?.isStale == true)
         #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == nil)
     }
@@ -327,7 +327,7 @@ struct TickerStateTests {
     @Test func freshQuoteWithErrorLines() {
         var state = TickerState(symbols: ["BZ=F"])
         state.pollSucceeded(Self.quote(at: Self.ago(70)), at: Self.ago(70))
-        state.pollFailed("BZ=F", reason: "timeout")
+        state.pollFailed("BZ=F", error: URLError(.timedOut))
         let view = Self.view(state, "BZ=F")
         #expect(view?.freshnessLines == ["Updated T-70", "Last error: timeout"])
         #expect(view?.tooltipLines == ["Brent Crude", "Updated T-70", "Last error: timeout"])
@@ -336,7 +336,7 @@ struct TickerStateTests {
     @Test func staleQuoteLines() {
         var state = TickerState(symbols: ["BZ=F"])
         state.pollSucceeded(Self.quote(at: Self.ago(900)), at: Self.ago(840))
-        state.pollFailed("BZ=F", reason: "offline")
+        state.pollFailed("BZ=F", error: URLError(.notConnectedToInternet))
         let view = Self.view(state, "BZ=F")
         #expect(view?.isStale == true)
         #expect(view?.freshnessLines == ["Stale: last update T-840", "Last error: offline"])
@@ -359,7 +359,7 @@ struct TickerStateTests {
 
     @Test func failedSymbolLines() {
         var state = TickerState(symbols: ["BZ=F"])
-        state.pollFailed("BZ=F", reason: "HTTP 503")
+        state.pollFailed("BZ=F", error: QuoteError.httpStatus(503))
         let view = Self.view(state, "BZ=F")
         #expect(view?.noQuoteLine == "BZ=F: failed to load (HTTP 503)")
         #expect(view?.freshnessLines == [])
@@ -379,21 +379,15 @@ struct TickerStateTests {
         var state = TickerState(symbols: ["BZ=F"])
         #expect(Self.view(state, "BZ=F")?.menuTitle == nil)
         #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: loading…"])
-        state.pollFailed("BZ=F", reason: "HTTP 503")
+        state.pollFailed("BZ=F", error: QuoteError.httpStatus(503))
         #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: failed to load (HTTP 503)"])
-    }
-
-    @Test func pollFailureFromAnErrorRecordsItsShortSummary() {
-        var state = TickerState(symbols: ["BZ=F"])
-        state.pollFailed("BZ=F", error: URLError(.timedOut))
-        #expect(Self.view(state, "BZ=F")?.menuLines == ["BZ=F: failed to load (timeout)"])
     }
 
     // MARK: Next stale recheck
 
     @Test func noRecheckWithoutQuotes() {
         var state = TickerState(symbols: ["BZ=F", "AAPL"])
-        state.pollFailed("BZ=F", reason: "timeout")
+        state.pollFailed("BZ=F", error: URLError(.timedOut))
         #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == nil)
     }
 
@@ -402,7 +396,7 @@ struct TickerStateTests {
         state.pollSucceeded(Self.quote("BZ=F", at: Self.ago(10)), at: Self.ago(10))
         state.pollSucceeded(Self.quote("AAPL", at: Self.ago(200)), at: Self.ago(200))
         // MSFT has no quote, so it never turns stale.
-        state.pollFailed("MSFT", reason: "timeout")
+        state.pollFailed("MSFT", error: URLError(.timedOut))
         // AAPL crosses the 5-minute threshold in 100 s, plus the 1 s margin.
         #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(101))
     }
@@ -572,7 +566,7 @@ struct TickerStateTests {
 
         // The late reply, success or failure, leaves no state behind.
         state.pollSucceeded(apple(price: 240, at: at(345)), at: at(345))
-        state.pollFailed("AAPL", reason: "timeout")
+        state.pollFailed("AAPL", error: URLError(.timedOut))
         #expect(Self.view(state, "AAPL", at: at(345)) == nil)
         #expect(state.symbolsToPoll(now: at(345), force: true) == ["BZ=F"])
         #expect(state.nextStaleRecheck(now: at(345), pollInterval: 60) == nil)
