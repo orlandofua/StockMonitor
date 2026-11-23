@@ -402,4 +402,88 @@ struct TickerStateTests {
         state.tickReceived(Self.tick(at: Self.now), at: Self.now)
         #expect(state.nextStaleRecheck(now: Self.now, pollInterval: 60) == Self.now.addingTimeInterval(301))
     }
+
+    // MARK: Symbols to poll (issue #44, docs/adr/0005)
+
+    /// A symbol that is live at `now`: polled `sincePoll` seconds ago, then ticked.
+    static func liveState(polled sincePoll: TimeInterval) -> TickerState {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollStarted("BZ=F", at: ago(sincePoll))
+        state.tickReceived(tick(at: ago(12)), at: ago(10))
+        return state
+    }
+
+    @Test func symbolNeverPolledIsReturned() {
+        let state = TickerState(symbols: ["BZ=F", "AAPL"])
+        #expect(Set(state.symbolsToPoll(now: Self.now, force: false)) == ["BZ=F", "AAPL"])
+    }
+
+    @Test(arguments: [0.0, 10, 299, 300, 3600])
+    func symbolThatIsNotLiveIsAlwaysReturned(sincePoll: TimeInterval) {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollStarted("BZ=F", at: Self.ago(sincePoll))
+        // Its last tick arrived 120 s ago, so the live window has just expired.
+        state.tickReceived(Self.tick(at: Self.ago(122)), at: Self.ago(120))
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == ["BZ=F"])
+    }
+
+    /// Live symbols are polled only every 300 s unless forced.
+    @Test(arguments: [(0.0, false), (10, false), (299, false), (299.999, false), (300, true), (301, true)])
+    func liveSymbolIsPolledEvery300Seconds(sincePoll: TimeInterval, polled: Bool) {
+        let state = Self.liveState(polled: sincePoll)
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == (polled ? ["BZ=F"] : []))
+    }
+
+    @Test func liveSymbolNeverPolledIsReturned() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.tickReceived(Self.tick(at: Self.ago(12)), at: Self.ago(10))
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == ["BZ=F"])
+    }
+
+    @Test func forceReturnsEveryTrackedSymbolLiveOrNot() {
+        var state = TickerState(symbols: ["BZ=F", "AAPL", "MSFT"])
+        state.pollStarted("BZ=F", at: Self.ago(10))
+        state.tickReceived(Self.tick("BZ=F", at: Self.ago(12)), at: Self.ago(10))
+        state.pollStarted("AAPL", at: Self.ago(10))
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == ["AAPL", "MSFT"])
+        #expect(state.symbolsToPoll(now: Self.now, force: true) == ["AAPL", "BZ=F", "MSFT"])
+    }
+
+    @Test func addedSymbolCountsAsJustPolledAtItsQuoteTime() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollStarted("BZ=F", at: Self.now)
+        state.add(Self.quote("AAPL", at: Self.ago(5)))
+        state.tickReceived(Self.tick("AAPL", at: Self.ago(2)), at: Self.ago(1))
+        state.tickReceived(Self.tick("BZ=F", at: Self.ago(2)), at: Self.ago(1))
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == [])
+        // Both stay live. 300 s after the validation quote, AAPL is due again;
+        // BZ=F, polled 5 s later, is not.
+        let later = Self.now.addingTimeInterval(295)
+        state.tickReceived(Self.tick("AAPL", at: later), at: later)
+        state.tickReceived(Self.tick("BZ=F", at: later), at: later)
+        #expect(state.symbolsToPoll(now: later, force: false) == ["AAPL"])
+    }
+
+    @Test func removedSymbolIsNeverReturned() {
+        var state = TickerState(symbols: ["BZ=F", "AAPL"])
+        state.remove("AAPL")
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == ["BZ=F"])
+        #expect(state.symbolsToPoll(now: Self.now, force: true) == ["BZ=F"])
+    }
+
+    @Test func pollStartedForUntrackedSymbolLeavesNoState() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollStarted("AAPL", at: Self.now)
+        #expect(state.symbolsToPoll(now: Self.now, force: true) == ["BZ=F"])
+        #expect(Self.view(state, "AAPL") == nil)
+    }
+
+    @Test func removedAndReAddedSymbolStartsWithANewPollTime() {
+        var state = TickerState(symbols: ["BZ=F"])
+        state.pollStarted("BZ=F", at: Self.ago(400))
+        state.remove("BZ=F")
+        state.add(Self.quote(at: Self.ago(5)))
+        state.tickReceived(Self.tick(at: Self.ago(2)), at: Self.ago(1))
+        #expect(state.symbolsToPoll(now: Self.now, force: false) == [])
+    }
 }

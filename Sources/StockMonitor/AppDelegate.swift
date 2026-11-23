@@ -23,10 +23,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // Live streaming (see docs/adr/0005). Polling remains the fallback.
     private let stream = QuoteStream()
-    /// When each symbol was last polled over HTTP.
-    private var lastPoll: [String: Date] = [:]
-    /// Live symbols are still polled this often to refresh name and previous close.
-    private let livePollInterval: TimeInterval = 300
 
     // Recovery after sleep or network loss (issue #5). The stream reconnects on
     // its own; this makes sure polled symbols catch up too.
@@ -96,7 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             NSStatusBar.system.removeStatusItem(item)
             items[sym] = nil
             tickers.remove(sym)
-            lastPoll[sym] = nil
             baselines.remove(sym)
         }
         stream.setSymbols(wanted)
@@ -153,8 +148,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     /// What the symbol's ticker and menu show now.
-    private func tickerView(_ sym: String, now: Date = Date()) -> TickerState.View? {
-        tickers.view(sym, now: now, pollInterval: interval, pollIntervalLabel: intervalLabel(interval))
+    private func tickerView(_ sym: String) -> TickerState.View? {
+        tickers.view(sym, now: Date(), pollInterval: interval, pollIntervalLabel: intervalLabel(interval))
     }
 
     private func baselineState(_ sym: String) -> BaselineState {
@@ -182,19 +177,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh(force: true)
     }
 
-    /// Polls symbols over HTTP. Live (streaming) symbols are only polled every
-    /// `livePollInterval` unless `force` is set.
+    /// Polls the symbols ticker state says are due. `force` polls every symbol,
+    /// live or not.
     private func refresh(force: Bool) {
         let now = Date()
         // Re-check staleness on every tick, so a quote turns gray even if its poll hangs.
         symbols.forEach(render)
-        for sym in symbols {
-            loadBaselineIfNeeded(sym)
-            if !force, tickerView(sym, now: now)?.isLive == true, let polled = lastPoll[sym],
-               now.timeIntervalSince(polled) < livePollInterval {
-                continue
-            }
-            lastPoll[sym] = now
+        symbols.forEach(loadBaselineIfNeeded)
+        for sym in tickers.symbolsToPoll(now: now, force: force) {
+            tickers.pollStarted(sym, at: now)
             Task { @MainActor in
                 do {
                     // While the symbol is live, ticker state keeps the streamed price.
@@ -311,7 +302,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         symbols.append(sym)
         // Use the quote from the check so the new item shows its price immediately.
         tickers.add(added.quote)
-        lastPoll[sym] = added.quote.fetchedAt
         // Rebuild all items so menu bar order matches the list order.
         items.values.forEach { NSStatusBar.system.removeStatusItem($0) }
         items.removeAll()
